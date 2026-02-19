@@ -1,3 +1,6 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+
 @font-face{
   font-family:"Prelo";
   src:url("https://www.rsm.global/netherlands/profiles/rsm_global_platform/themes/rsm_global_platform_2022/fonts/Prelo-Light.woff2") format("woff2");
@@ -48,7 +51,7 @@
 html,body{ height:100%; }
 body{
   margin:0;
-  font-family: "Prelo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
+font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
   color: var(--text);
   background:
     radial-gradient(1200px 700px at 10% -10%, rgba(43,179,230,.18), transparent 55%),
