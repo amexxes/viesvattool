@@ -401,12 +401,20 @@ export default function App() {
       markerLayerRef.current = layer;
 
       fetch("/countries.geojson")
-        .then((r) => (r.ok ? r.json() : null))
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`countries.geojson HTTP ${r.status}`);
+          return r.json();
+        })
         .then((j) => {
-          if (!j) return;
+          console.log("countries.geojson loaded", j);
           geoJsonRef.current = j;
           setMapGeoVersion((v) => v + 1);
         })
+        .catch((e) => {
+          console.error("countries.geojson failed", e);
+          geoJsonRef.current = null;
+          setMapGeoVersion((v) => v + 1);
+        });
         .catch(() => {});
     } catch {
       el.innerHTML = "<div style='padding:12px;color:#6b7280;font-size:12px;'>Map unavailable</div>";
