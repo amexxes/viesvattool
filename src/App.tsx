@@ -453,8 +453,6 @@ useEffect(() => {
   const layer = markerLayerRef.current;
   if (!map || !layer) return;
 
-  layer.clearLayers();
-
 layer.clearLayers();
 
 if (geoJsonRef.current) {
