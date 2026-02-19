@@ -3,38 +3,7 @@ import L from "leaflet";
 import type { FrJobResponse, ValidateBatchResponse, VatRow } from "./types";
 
 type SortState = { colIndex: number | null; asc: boolean };
-const ERROR_MAP: Record<string, string> = {
-  MS_MAX_CONCURRENT_REQ: "Member State (FR) heeft te veel gelijktijdige checks; we proberen later opnieuw.",
-  MS_UNAVAILABLE: "Member State is tijdelijk niet beschikbaar; we proberen later opnieuw.",
-  TIMEOUT: "Timeout richting VIES; we proberen later opnieuw.",
-  GLOBAL_MAX_CONCURRENT_REQ: "VIES is druk; we proberen later opnieuw.",
-  SERVICE_UNAVAILABLE: "VIES service unavailable; we proberen later opnieuw.",
-};
-
-function humanError(code?: string, fallback?: string) {
-  const c = (code || "").trim();
-  return ERROR_MAP[c] || fallback || c || "";
-}
-
-function formatEta(ts?: number) {
-  if (!ts) return "";
-  const diff = Math.max(0, ts - Date.now());
-  const s = Math.round(diff / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.round(s / 60);
-  return `${m}m`;
-}
-
-function validateFormat(vatNumberWithPrefix: string) {
-  const v = normalizeLine(vatNumberWithPrefix);
-  if (v.length < 3) return { ok: false, reason: "Too short" };
-  const cc = v.slice(0, 2);
-  if (!/^[A-Z]{2}$/.test(cc)) return { ok: false, reason: "Missing country prefix" };
-  const rest = v.slice(2);
-  if (!rest) return { ok: false, reason: "Missing VAT digits" };
-  if (!/^[A-Z0-9]+$/.test(rest)) return { ok: false, reason: "Invalid characters" };
-  return { ok: true, reason: "" };
-}
+type SavedRun = { id: string; ts: number; caseRef: string; input: string; results: VatRow[] };
 
 const COUNTRY_COORDS: Record<string, { lat: number; lon: number }> = {
   AT:{lat:48.2082,lon:16.3738}, BE:{lat:50.8503,lon:4.3517}, BG:{lat:42.6977,lon:23.3219},
@@ -47,6 +16,15 @@ const COUNTRY_COORDS: Record<string, { lat: number; lon: number }> = {
   PL:{lat:52.2297,lon:21.0122}, PT:{lat:38.7223,lon:-9.1393}, RO:{lat:44.4268,lon:26.1025},
   SE:{lat:59.3293,lon:18.0686}, SI:{lat:46.0569,lon:14.5058}, SK:{lat:48.1486,lon:17.1077},
   XI:{lat:54.5973,lon:-5.9301},
+};
+
+const ERROR_MAP: Record<string, string> = {
+  MS_MAX_CONCURRENT_REQ: "Member State (FR) heeft te veel gelijktijdige checks; we proberen later opnieuw.",
+  MS_UNAVAILABLE: "Member State is tijdelijk niet beschikbaar; we proberen later opnieuw.",
+  TIMEOUT: "Timeout richting VIES; we proberen later opnieuw.",
+  GLOBAL_MAX_CONCURRENT_REQ: "VIES is druk; we proberen later opnieuw.",
+  SERVICE_UNAVAILABLE: "VIES service unavailable; we proberen later opnieuw.",
+  NETWORK_ERROR: "Netwerkfout richting VIES; we proberen later opnieuw.",
 };
 
 function normalizeLine(s: string): string {
@@ -75,6 +53,31 @@ function valText(v: unknown): string {
   return String(v);
 }
 
+function humanError(code?: string, fallback?: string) {
+  const c = (code || "").trim();
+  return ERROR_MAP[c] || fallback || c || "";
+}
+
+function formatEta(ts?: number) {
+  if (!ts) return "";
+  const diff = Math.max(0, ts - Date.now());
+  const s = Math.round(diff / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  return `${m}m`;
+}
+
+function validateFormat(vatNumberWithPrefix: string) {
+  const v = normalizeLine(vatNumberWithPrefix);
+  if (v.length < 3) return { ok: false, reason: "Too short" };
+  const cc = v.slice(0, 2);
+  if (!/^[A-Z]{2}$/.test(cc)) return { ok: false, reason: "Missing country prefix" };
+  const rest = v.slice(2);
+  if (!rest) return { ok: false, reason: "Missing VAT digits" };
+  if (!/^[A-Z0-9]+$/.test(rest)) return { ok: false, reason: "Invalid characters" };
+  return { ok: true, reason: "" };
+}
+
 function computeCountryCountsFromInput(text: string): Record<string, number> {
   const lines = text.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   const seen = new Set<string>();
@@ -99,9 +102,14 @@ function computeCountryCountsFromInput(text: string): Record<string, number> {
 
 export default function App() {
   const [vatInput, setVatInput] = useState<string>("");
+  const [caseRef, setCaseRef] = useState<string>("");
   const [filter, setFilter] = useState<string>("");
+
   const [rows, setRows] = useState<VatRow[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const [duplicatesIgnored, setDuplicatesIgnored] = useState(0);
+  const [viesStatus, setViesStatus] = useState<Array<{ countryCode: string; availability: string }>>([]);
 
   const [frText, setFrText] = useState("-");
   const [lastUpdate, setLastUpdate] = useState("-");
@@ -112,6 +120,24 @@ export default function App() {
 
   const [mapLegend, setMapLegend] = useState("—");
   const [mapCount, setMapCount] = useState("0 countries");
+
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  const [savedRuns, setSavedRuns] = useState<SavedRun[]>(() => {
+    try { return JSON.parse(localStorage.getItem("vat_saved_runs") || "[]"); } catch { return []; }
+  });
+
+  const [notes, setNotes] = useState<Record<string, { note: string; tag: "whitelist"|"blacklist"|"" }>>(() => {
+    try { return JSON.parse(localStorage.getItem("vat_notes") || "{}"); } catch { return {}; }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("vat_saved_runs", JSON.stringify(savedRuns.slice(0, 30)));
+  }, [savedRuns]);
+
+  useEffect(() => {
+    localStorage.setItem("vat_notes", JSON.stringify(notes));
+  }, [notes]);
 
   const currentFrJobIdRef = useRef<string | null>(null);
   const pollTimerRef = useRef<number | null>(null);
@@ -138,7 +164,6 @@ export default function App() {
       else if (st === "error") { done++; err++; }
       else if (st === "queued" || st === "retry" || st === "processing") { pending++; }
     }
-
     return { total, done, vOk, vBad, pending, err };
   }, [rows]);
 
@@ -155,6 +180,13 @@ export default function App() {
     currentFrJobIdRef.current = null;
   }
 
+  function enrichRow(r: VatRow): VatRow {
+    const key = `${r.country_code || ""}:${r.vat_part || ""}`;
+    const fmt = validateFormat(r.vat_number || r.input || "");
+    const user = notes[key] || { note: "", tag: "" };
+    return { ...r, format_ok: fmt.ok, format_reason: fmt.reason, note: user.note, tag: user.tag, case_ref: r.case_ref || caseRef };
+  }
+
   async function pollFrJob(jobId: string) {
     try {
       const resp = await fetch(`/api/fr-job/${encodeURIComponent(jobId)}`);
@@ -166,13 +198,16 @@ export default function App() {
       setRows((prev) => {
         const map = new Map<string, VatRow>();
         for (const r of prev) {
-          const k = r.vat_number || r.input || crypto.randomUUID();
+          const k = `${r.country_code || ""}:${r.vat_part || ""}` || r.vat_number || r.input || crypto.randomUUID();
           map.set(k, r);
         }
+
         for (const r of (data.results || [])) {
-          const k = r.vat_number || r.input || crypto.randomUUID();
-          map.set(k, r);
+          const k = `${r.country_code || ""}:${r.vat_part || ""}` || r.vat_number || r.input || crypto.randomUUID();
+          const merged = { ...map.get(k), ...r };
+          map.set(k, enrichRow(merged));
         }
+
         return Array.from(map.values());
       });
 
@@ -186,12 +221,14 @@ export default function App() {
 
   async function onValidate() {
     stopPolling();
+    setExpandedKey(null);
     setRows([]);
     setFrText("-");
     setLastUpdate("-");
     setSortState({ colIndex: null, asc: true });
     setSortLabel("");
     setLoading(true);
+    setDuplicatesIgnored(0);
 
     const lines = vatInput.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     if (!lines.length) { setLoading(false); return; }
@@ -200,11 +237,17 @@ export default function App() {
       const resp = await fetch("/api/validate-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vat_numbers: lines })
+        body: JSON.stringify({ vat_numbers: lines, case_ref: caseRef })
       });
-      const data = (await resp.json()) as ValidateBatchResponse;
 
-      setRows(data.results || []);
+      const data = (await resp.json()) as ValidateBatchResponse & any;
+
+      setDuplicatesIgnored(data.duplicates_ignored || 0);
+      setViesStatus(Array.isArray(data.vies_status) ? data.vies_status : []);
+
+      const enriched = (data.results || []).map((r: VatRow) => enrichRow({ ...r, case_ref: caseRef }));
+      setRows(enriched);
+
       setLastUpdate(new Date().toLocaleString("nl-NL"));
 
       if (data.fr_job_id) {
@@ -226,6 +269,7 @@ export default function App() {
   function onClear() {
     stopPolling();
     setVatInput("");
+    setCaseRef("");
     setFilter("");
     setRows([]);
     setFrText("-");
@@ -233,6 +277,9 @@ export default function App() {
     setProgressText("0/0");
     setSortState({ colIndex: null, asc: true });
     setSortLabel("");
+    setDuplicatesIgnored(0);
+    setViesStatus([]);
+    setExpandedKey(null);
   }
 
   function getCellText(r: VatRow, colIndex: number): string {
@@ -244,33 +291,81 @@ export default function App() {
       valText(r.valid),
       r.name ?? "",
       r.address ?? "",
-      r.error ?? "",
+      r.error_code ?? r.error ?? "",
       r.details ?? ""
     ];
     return cols[colIndex] ?? "";
   }
 
-function sortByColumn(colIndex: number, label: string) {
-  setSortState((prevSort) => {
-    const asc = prevSort.colIndex === colIndex ? !prevSort.asc : true;
+  function sortByColumn(colIndex: number, label: string) {
+    setSortState((prevSort) => {
+      const asc = prevSort.colIndex === colIndex ? !prevSort.asc : true;
 
-    setRows((prevRows) => {
-      const copy = [...prevRows];
-      copy.sort((a, b) => {
-        const ta = getCellText(a, colIndex).toLowerCase();
-        const tb = getCellText(b, colIndex).toLowerCase();
-        const cmp = ta.localeCompare(tb, "nl");
-        return asc ? cmp : -cmp;
+      setRows((prevRows) => {
+        const copy = [...prevRows];
+        copy.sort((a, b) => {
+          const ta = getCellText(a, colIndex).toLowerCase();
+          const tb = getCellText(b, colIndex).toLowerCase();
+          const cmp = ta.localeCompare(tb, "nl");
+          return asc ? cmp : -cmp;
+        });
+        return copy;
       });
-      return copy;
+
+      setSortLabel(`Sort: ${label} (${asc ? "asc" : "desc"})`);
+      return { colIndex, asc };
     });
+  }
 
-    setSortLabel(`Sort: ${label} (${asc ? "asc" : "desc"})`);
-    return { colIndex, asc };
-  });
-}
+  useEffect(() => {
+    setProgressText(`${stats.done}/${stats.total}`);
+  }, [stats.done, stats.total]);
 
+  function exportCsv() {
+    const headers = ["case_ref","input","vat_number","country_code","valid","state","name","address","error_code","error","attempt","next_retry_at","note","tag","checked_at"];
+    const lines = [
+      headers.join(","),
+      ...rows.map((r) => headers.map((h) => {
+        const v = (r as any)[h];
+        const s = v === null || v === undefined ? "" : String(v);
+        return `"${s.replace(/"/g,'""')}"`;
+      }).join(","))
+    ].join("\n");
 
+    const blob = new Blob([lines], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vat_results_${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function saveRun() {
+    const id = crypto.randomUUID();
+    setSavedRuns((prev) => [{ id, ts: Date.now(), caseRef, input: vatInput, results: rows }, ...prev].slice(0, 30));
+  }
+
+  function loadRun(id: string) {
+    const run = savedRuns.find((x) => x.id === id);
+    if (!run) return;
+    stopPolling();
+    setVatInput(run.input);
+    setCaseRef(run.caseRef || "");
+    setRows(run.results || []);
+    setLastUpdate(new Date(run.ts).toLocaleString("nl-NL"));
+  }
+
+  function updateNoteTag(row: VatRow, note: string, tag: "whitelist"|"blacklist"|"" ) {
+    const key = `${row.country_code || ""}:${row.vat_part || ""}`;
+    setNotes((prev) => ({ ...prev, [key]: { note, tag } }));
+    setRows((prev) => prev.map((r) => {
+      const k = `${r.country_code || ""}:${r.vat_part || ""}`;
+      return k === key ? { ...r, note, tag } : r;
+    }));
+  }
+
+  // --- Map init ---
   useEffect(() => {
     const el = document.getElementById("countryMap");
     if (!el) return;
@@ -351,146 +446,275 @@ function sortByColumn(colIndex: number, label: string) {
     }
   }, [countryCounts]);
 
-  useEffect(() => {
-    setProgressText(`${stats.done}/${stats.total}`);
-  }, [stats.done, stats.total]);
-
   return (
     <>
       <div className="banner">
-        <div className="banner-accent"></div>
+        <div className="banner-accent" />
         <div className="banner-inner">
           <div className="brand">
-            <div className="mark" aria-label="RSM">
-              <div className="mark-bars" aria-hidden="true">
-                <span></span><span></span><span></span>
-              </div>
+            <div className="mark" aria-hidden="true">
+              <div className="mark-bars"><span /><span /><span /></div>
               <div className="mark-text">RSM</div>
             </div>
             <div className="title">VAT validation</div>
+          </div>
+
+          <div className="chipsRow" style={{ marginTop: 0, width: "100%", maxWidth: 560 }}>
+            <div className="chip"><span>FR job</span><b className="nowrap">{frText}</b></div>
+            <div className="chip"><span>Last update</span><b className="nowrap">{lastUpdate}</b></div>
           </div>
         </div>
       </div>
 
       <div className="wrap">
-        <section className="grid">
+        <div className="grid">
           <div className="card">
-            <h2>VAT numbers</h2>
-            <p className="hint">Paste VAT numbers with country prefix (1 per line). Duplicates are ignored.</p>
+            <h2>Input</h2>
+            <p className="hint">
+              Paste VAT numbers (1 per line). Non-FR is checked realtime. FR is queued (retry/backoff) and will update via polling.
+            </p>
+
+            <div className="row" style={{ marginTop: 6 }}>
+              <input
+                type="text"
+                value={caseRef}
+                onChange={(e) => setCaseRef(e.target.value)}
+                placeholder="Client / Case (optioneel)"
+                style={{ flex: 1, minWidth: 220 }}
+              />
+              <button className="btn btn-secondary" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
+              <button className="btn btn-secondary" onClick={saveRun} disabled={!rows.length}>Save run</button>
+            </div>
+
+            {duplicatesIgnored > 0 && (
+              <div className="callout" style={{ marginTop: 10 }}>
+                <b>{duplicatesIgnored}</b> duplicaten genegeerd.
+              </div>
+            )}
 
             <textarea
               value={vatInput}
               onChange={(e) => setVatInput(e.target.value)}
-              placeholder={"FR23450327580\nDE123456789\nRO12345678"}
+              placeholder={`NL123456789B01\nDE123456789\nFR12345678901\n...`}
             />
 
             <div className="row">
-              <button className="btn btn-primary" onClick={() => void onValidate()} disabled={loading}>
-                {loading ? "Validating..." : "Validate"}
+              <button className="btn btn-primary" onClick={onValidate} disabled={loading}>
+                {loading ? "Validating…" : "Validate"}
               </button>
               <button className="btn btn-secondary" onClick={onClear} disabled={loading}>
                 Clear
               </button>
+
+              <div style={{ flex: 1 }} />
+
+              <div className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
+                Progress: <b style={{ color: "var(--text)" }}>{progressText}</b> · <b style={{ color: "var(--text)" }}>{progressPct}%</b>
+              </div>
             </div>
 
-            <div className="progress" aria-label="Progress bar">
+            <div className="progress" aria-hidden="true">
               <div className="bar" style={{ width: `${progressPct}%` }} />
             </div>
 
             <div className="stats">
               <div className="stat"><span>Total</span><b>{stats.total}</b></div>
               <div className="stat"><span>Done</span><b>{stats.done}</b></div>
-              <div className="stat"><span>Valid</span><b>{stats.vOk}</b></div>
-              <div className="stat"><span>Invalid</span><b>{stats.vBad}</b></div>
-              <div className="stat"><span>Pending</span><b>{stats.pending}</b></div>
-              <div className="stat"><span>Error</span><b>{stats.err}</b></div>
+              <div className="stat"><span>Valid</span><b style={{ color: "var(--ok)" }}>{stats.vOk}</b></div>
+              <div className="stat"><span>Invalid</span><b style={{ color: "var(--bad)" }}>{stats.vBad}</b></div>
+              <div className="stat"><span>Pending</span><b style={{ color: "var(--warn)" }}>{stats.pending}</b></div>
+              <div className="stat"><span>Error</span><b style={{ color: "var(--bad)" }}>{stats.err}</b></div>
+            </div>
+
+            <div className="mapbox">
+              <div className="mapbox-head">
+                <div className="mapbox-title">Input distribution</div>
+                <div className="mapbox-sub"><span className="nowrap">{mapCount}</span></div>
+              </div>
+
+              <div id="countryMap" />
+
+              <div className="mapbox-foot">
+                <div id="mapLegend" title={mapLegend}>{mapLegend}</div>
+                <div className="map-attrib">
+                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                    © OpenStreetMap
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div className="callout" style={{ marginTop: 14 }}>
+              <b>Tip</b>: Use the filter to search within results. Click a column header to sort. Click a row to expand details.
             </div>
           </div>
 
-          <div className="card">
-            <h2>Filter & notes</h2>
-            <div className="filterBox">
-              <input
-                type="text"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter (searches all columns)..."
-              />
-
-              <div className="callout">
-                <b>France (FR)</b><br/>
-                FR is processed in a background job (token + polling). Details shows retry timing and error codes.
-              </div>
-
-              <div className="mapbox">
-                <div className="mapbox-head">
-                  <div className="mapbox-title">VAT origins</div>
-                  <div className="mapbox-sub">{mapCount}</div>
-                </div>
-                <div id="countryMap" aria-label="Map of VAT origins"></div>
-                <div className="mapbox-foot">
-                  <div id="mapLegend">{mapLegend}</div>
-                  <div className="map-attrib">
-                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OSM</a>
-                  </div>
+          <div>
+            <div className="card">
+              <h2>Filter</h2>
+              <div className="filterBox">
+                <input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Search in results…"
+                />
+                <div className="callout">
+                  Sorting: <span className="mono">{sortLabel || "—"}</span>
                 </div>
               </div>
+            </div>
 
-              <div className="chipsRow">
-                <div className="chip"><span>Progress</span><b>{progressText}</b></div>
-                <div className="chip"><span>FR job</span><b>{frText}</b></div>
-                <div className="chip"><span>Last update</span><b>{lastUpdate}</b></div>
+            <div className="card" style={{ marginTop: 16 }}>
+              <h2>VIES status per land</h2>
+              <p className="hint">Beschikbaarheid volgens VIES check-status.</p>
+              <div style={{ overflow: "auto", maxHeight: 260 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 120 }}>Country</th>
+                      <th style={{ width: 220 }}>Availability</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viesStatus.map((c) => (
+                      <tr key={c.countryCode}>
+                        <td className="mono nowrap">{c.countryCode}</td>
+                        <td>{c.availability}</td>
+                      </tr>
+                    ))}
+                    {!viesStatus.length && (
+                      <tr><td colSpan={2} style={{ padding: 12, color: "var(--muted)" }}>No data</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
+            </div>
 
-              <p className="hint" style={{ margin: 0 }}>Sorting: click table headers.</p>
+            <div className="card" style={{ marginTop: 16 }}>
+              <h2>Saved runs</h2>
+              <div style={{ display:"flex", flexDirection:"column", gap: 8 }}>
+                {savedRuns.slice(0, 8).map((r) => (
+                  <button key={r.id} className="btn btn-secondary" onClick={() => loadRun(r.id)} style={{ textAlign:"left" }}>
+                    {new Date(r.ts).toLocaleString("nl-NL")} — {r.caseRef || "—"} — {r.results?.length || 0} rows
+                  </button>
+                ))}
+                {!savedRuns.length && <div className="hint">Nog geen runs opgeslagen.</div>}
+              </div>
             </div>
           </div>
-        </section>
+        </div>
 
         <div className="tableWrap">
           <div className="tableHeader">
-            <div>
-              <strong>Results</strong>{" "}
-              <span className="muted">• {filteredRows.length} rows</span>
+            <strong>Results</strong>
+            <div className="muted">
+              Showing <b style={{ color: "var(--text)" }}>{filteredRows.length}</b> rows
             </div>
-            <div className="muted">{sortLabel}</div>
           </div>
 
-          <div style={{ overflow: "auto", maxHeight: 600 }}>
+          <div style={{ overflow: "auto", maxHeight: 520 }}>
             <table>
               <thead>
                 <tr>
-                  <th onClick={() => sortByColumn(0, "Source")}>Source</th>
-                  <th onClick={() => sortByColumn(1, "State")}>State</th>
-                  <th onClick={() => sortByColumn(2, "VAT")}>VAT</th>
-                  <th onClick={() => sortByColumn(3, "Country")}>Country</th>
-                  <th onClick={() => sortByColumn(4, "Valid")}>Valid</th>
-                  <th onClick={() => sortByColumn(5, "Name")}>Name</th>
-                  <th onClick={() => sortByColumn(6, "Address")}>Address</th>
-                  <th onClick={() => sortByColumn(7, "Error")}>Error</th>
-                  <th onClick={() => sortByColumn(8, "Details")}>Details</th>
+                  <th style={{ width: 110 }} onClick={() => sortByColumn(0, "Source")}>Source</th>
+                  <th style={{ width: 140 }} onClick={() => sortByColumn(1, "State")}>State</th>
+                  <th style={{ width: 170 }} onClick={() => sortByColumn(2, "VAT")}>VAT</th>
+                  <th style={{ width: 90 }} onClick={() => sortByColumn(3, "Country")}>Country</th>
+                  <th style={{ width: 90 }} onClick={() => sortByColumn(4, "Valid")}>Valid</th>
+                  <th style={{ width: 90 }}>Format</th>
+                  <th style={{ width: 110 }}>Tag</th>
+                  <th style={{ width: 260 }} onClick={() => sortByColumn(5, "Name")}>Name</th>
+                  <th style={{ width: 260 }} onClick={() => sortByColumn(6, "Address")}>Address</th>
+                  <th style={{ width: 220 }} onClick={() => sortByColumn(7, "Error")}>Error</th>
+                  <th style={{ width: 220 }} onClick={() => sortByColumn(8, "Details")}>Details</th>
                 </tr>
               </thead>
+
               <tbody>
                 {filteredRows.map((r, idx) => {
-                  const key = r.vat_number || r.input || String(idx);
-                  const st = stateClass(r.state);
+                  const st = stateLabel(r.state);
+                  const cls = stateClass(r.state);
+                  const key = `${r.country_code || ""}:${r.vat_part || ""}` || `${r.vat_number || r.input || idx}`;
+                  const isOpen = expandedKey === key;
+                  const eta = r.next_retry_at ? formatEta(r.next_retry_at) : "";
+
                   return (
-                    <tr key={key} data-state={st}>
-                      <td>{r.source ?? ""}</td>
-                      <td className="nowrap">
-                        <span className={`pill ${st}`}><i></i>{stateLabel(r.state)}</span>
-                      </td>
-                      <td className="mono nowrap">{r.vat_number ?? ""}</td>
-                      <td className="mono nowrap">{r.country_code ?? ""}</td>
-                      <td className="mono nowrap">{valText(r.valid)}</td>
-                      <td>{r.name ?? ""}</td>
-                      <td>{r.address ?? ""}</td>
-                      <td className="mono nowrap">{r.error ?? ""}</td>
-                      <td>{r.details ?? ""}</td>
-                    </tr>
+                    <React.Fragment key={`${key}-${idx}`}>
+                      <tr onClick={() => setExpandedKey(isOpen ? null : key)} style={{ cursor: "pointer" }}>
+                        <td className="mono">{r.source || ""}</td>
+                        <td>
+                          <span className={`pill ${cls}`}>
+                            <i aria-hidden="true" />
+                            {st}{cls === "retry" && eta ? ` (ETA ${eta})` : ""}
+                          </span>
+                        </td>
+                        <td className="mono nowrap" title={r.vat_number || r.input || ""}>{r.vat_number || r.input || ""}</td>
+                        <td className="mono nowrap">{r.country_code || ""}</td>
+                        <td className="mono nowrap">{valText(r.valid)}</td>
+
+                        <td className="mono nowrap" title={r.format_reason || ""}>
+                          {r.format_ok === false ? "bad" : "ok"}
+                        </td>
+
+                        <td title={r.tag || ""}>
+                          {r.tag ? <span className={`badgeTag ${r.tag}`}>{r.tag}</span> : <span style={{ color:"var(--muted)" }}>—</span>}
+                        </td>
+
+                        <td title={r.name || ""}>{r.name || ""}</td>
+                        <td title={r.address || ""}>{r.address || ""}</td>
+
+                        <td title={humanError(r.error_code, r.error) || ""}>
+                          {humanError(r.error_code, r.error) || ""}
+                        </td>
+
+                        <td title={r.details || ""}>{r.details || ""}</td>
+                      </tr>
+
+                      {isOpen && (
+                        <tr>
+                          <td colSpan={11} className="rowDetails">
+                            <div className="kv">
+                              <span>Case</span><b>{r.case_ref || "—"}</b>
+                              <span>Checked at</span><b>{r.checked_at ? new Date(r.checked_at).toLocaleString("nl-NL") : "—"}</b>
+                              <span>Error code</span><b>{r.error_code || "—"}</b>
+                              <span>Attempt</span><b>{typeof r.attempt === "number" ? String(r.attempt) : "—"}</b>
+                              <span>Next retry</span><b>{r.next_retry_at ? new Date(r.next_retry_at).toLocaleString("nl-NL") : "—"}</b>
+                              <span>Format</span><b>{r.format_ok === false ? `Bad (${r.format_reason})` : "OK"}</b>
+                            </div>
+
+                            <div className="row" style={{ marginTop: 10 }}>
+                              <select
+                                value={r.tag || ""}
+                                onChange={(e) => updateNoteTag(r, (r.note || ""), e.target.value as any)}
+                              >
+                                <option value="">No tag</option>
+                                <option value="whitelist">Whitelist</option>
+                                <option value="blacklist">Blacklist</option>
+                              </select>
+
+                              <input
+                                type="text"
+                                value={r.note || ""}
+                                onChange={(e) => updateNoteTag(r, e.target.value, (r.tag as any) || "")}
+                                placeholder="Note (optioneel)"
+                                style={{ flex: 1, minWidth: 260 }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
+
+                {!filteredRows.length && (
+                  <tr>
+                    <td colSpan={11} style={{ padding: 16, color: "var(--muted)" }}>
+                      No results
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
