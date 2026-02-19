@@ -1,3 +1,4 @@
+/* /src/styles.css */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 
 
@@ -51,7 +52,7 @@
 html,body{ height:100%; }
 body{
   margin:0;
-font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
   color: var(--text);
   background:
     radial-gradient(1200px 700px at 10% -10%, rgba(43,179,230,.18), transparent 55%),
@@ -187,7 +188,7 @@ input[type="text"]:focus{ border-color: rgba(43,179,230,.65); box-shadow: 0 0 0 
   display:flex;
   flex-direction:column;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 12px;
 }
 .mapbox-head{ display:flex; align-items:baseline; justify-content:space-between; gap: 8px; }
 .mapbox-title{ font-weight: 800; color: var(--navy); letter-spacing:.2px; font-size: 12px; text-transform: uppercase; }
@@ -203,6 +204,7 @@ input[type="text"]:focus{ border-color: rgba(43,179,230,.65); box-shadow: 0 0 0 
   z-index: 0;
 }
 .leaflet-container,.leaflet-pane,.leaflet-top,.leaflet-bottom{ z-index: 0 !important; }
+.leaflet-interactive{ cursor: pointer; }
 
 .mapbox-foot{ display:flex; justify-content:space-between; gap: 10px; align-items:baseline; font-size: 11px; color: var(--muted); }
 #mapLegend{ overflow:hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
@@ -288,6 +290,7 @@ tbody tr:hover td{ background: rgba(11,46,95,.02); }
   thead th{ position: static; }
   .chipsRow{ grid-template-columns: 1fr; }
 }
+
 /* Table stays within viewport */
 .tableWrap { max-width: 100%; }
 .tableWrap table { width: 100%; table-layout: fixed; }
@@ -322,4 +325,3 @@ tbody tr:hover td{ background: rgba(11,46,95,.02); }
 }
 .badgeTag.whitelist { background: rgba(26,167,91,.08); border-color: rgba(26,167,91,.22); color:#0b5a2f; }
 .badgeTag.blacklist { background: rgba(217,45,32,.08); border-color: rgba(217,45,32,.22); color:#7a1b14; }
-
