@@ -460,8 +460,21 @@ app.post("/api/validate-batch", async (req, res) => {
   const fr = unique.filter((p) => p.countryCode === "FR");
   const other = unique.filter((p) => p.countryCode !== "FR");
 
+  const RETRYABLE = new Set([
+    "MS_MAX_CONCURRENT_REQ",
+    "MS_UNAVAILABLE",
+    "TIMEOUT",
+    "GLOBAL_MAX_CONCURRENT_REQ",
+    "SERVICE_UNAVAILABLE",
+    "NETWORK_ERROR",
+    "HTTP_429",
+    "HTTP_503",
+  ]);
+  const isRetryable = (code) => RETRYABLE.has(String(code || "").trim());
+
   // status snapshot (for UI table)
   let vies_status = null;
+
   try {
     const st = await getViesStatus();
     vies_status = st?.countries?.map((c) => ({ countryCode: c.countryCode, availability: c.availability })) || null;
@@ -469,7 +482,29 @@ app.post("/api/validate-batch", async (req, res) => {
     vies_status = null;
   }
 
-  // Non-FR realtime
+    // FR async job (we gebruiken dezelfde queue ook voor retryable errors van andere landen)
+  let fr_job_id = null;
+  let jobEntry = null;
+
+  const ensureJob = () => {
+    if (jobEntry) return;
+    fr_job_id = randomUUID();
+    jobEntry = {
+      job: {
+        job_id: fr_job_id,
+        status: "queued",
+        total: 0,
+        done: 0,
+        updated_at: Date.now(),
+        created_at: Date.now(),
+        message: null,
+      },
+      results: new Map(),
+    };
+    jobs.set(fr_job_id, jobEntry);
+  };
+
+  // Non-FR realtime (maar bij retryable error -> queue zoals FR)
   const otherResults = await mapLimit(other, 6, async (p) => {
     const key = `${p.countryCode}:${p.vatNumber}`;
     const cached = cacheGet(key);
@@ -484,28 +519,30 @@ app.post("/api/validate-batch", async (req, res) => {
 
     const code = r.errorCode || `HTTP_${r.status || 0}`;
     const details = r.message || JSON.stringify(r.data);
+
+    if (isRetryable(code)) {
+      ensureJob();
+      if (!jobEntry.results.has(key)) {
+        jobEntry.job.total++;
+        jobEntry.results.set(key, rowFromQueued(p, case_ref));
+        frQueue.push({ jobId: fr_job_id, key, p, attempt: 0, nextRunAt: Date.now(), case_ref });
+      }
+      jobEntry.job.status = "running";
+      jobEntry.job.updated_at = Date.now();
+      scheduleWorker();
+      return rowFromQueued(p, case_ref);
+    }
+
     return rowFromError(p, code, details, case_ref);
   });
 
   // FR async job
-  let fr_job_id = null;
+
   let frRows = [];
 
   if (fr.length) {
-    fr_job_id = randomUUID();
-
-    const jobEntry = {
-      job: {
-        job_id: fr_job_id,
-        status: "queued",
-        total: fr.length,
-        done: 0,
-        updated_at: Date.now(),
-        created_at: Date.now(),
-        message: null,
-      },
-      results: new Map(),
-    };
+    ensureJob();
+    jobEntry.job.total += fr.length;
 
     for (const p of fr) {
       const key = `${p.countryCode}:${p.vatNumber}`;
@@ -522,14 +559,13 @@ app.post("/api/validate-batch", async (req, res) => {
 
     jobEntry.job.status = jobEntry.job.done >= jobEntry.job.total ? "completed" : "running";
     jobEntry.job.updated_at = Date.now();
-
-    jobs.set(fr_job_id, jobEntry);
     scheduleWorker();
 
     frRows = Array.from(jobEntry.results.values());
   }
 
   res.json({
+
     count: otherResults.length + frRows.length,
     fr_job_id,
     duplicates_ignored,
