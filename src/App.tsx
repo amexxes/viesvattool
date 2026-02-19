@@ -1,465 +1,496 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
-import type { FrJobResponse, ValidateBatchResponse, VatRow } from "./types";
+import type { FrJobResponse, ValidateBatchResponse, ValidationRow } from "./types";
 
-type SortState = { colIndex: number | null; asc: boolean };
+type SortKey =
+  | "source"
+  | "state"
+  | "vat_number"
+  | "country_code"
+  | "valid"
+  | "name"
+  | "address"
+  | "error"
+  | "details";
 
-const COUNTRY_COORDS: Record<string, { lat: number; lon: number }> = {
-  AT:{lat:48.2082,lon:16.3738}, BE:{lat:50.8503,lon:4.3517}, BG:{lat:42.6977,lon:23.3219},
-  CY:{lat:35.1856,lon:33.3823}, CZ:{lat:50.0755,lon:14.4378}, DE:{lat:52.52,lon:13.405},
-  DK:{lat:55.6761,lon:12.5683}, EE:{lat:59.437,lon:24.7536}, EL:{lat:37.9838,lon:23.7275},
-  ES:{lat:40.4168,lon:-3.7038}, FI:{lat:60.1699,lon:24.9384}, FR:{lat:48.8566,lon:2.3522},
-  HR:{lat:45.815,lon:15.9819}, HU:{lat:47.4979,lon:19.0402}, IE:{lat:53.3498,lon:-6.2603},
-  IT:{lat:41.9028,lon:12.4964}, LT:{lat:54.6872,lon:25.2797}, LU:{lat:49.6116,lon:6.1319},
-  LV:{lat:56.9496,lon:24.1052}, MT:{lat:35.8989,lon:14.5146}, NL:{lat:52.3676,lon:4.9041},
-  PL:{lat:52.2297,lon:21.0122}, PT:{lat:38.7223,lon:-9.1393}, RO:{lat:44.4268,lon:26.1025},
-  SE:{lat:59.3293,lon:18.0686}, SI:{lat:46.0569,lon:14.5058}, SK:{lat:48.1486,lon:17.1077},
-  XI:{lat:54.5973,lon:-5.9301},
-};
+type SortDir = "asc" | "desc";
 
-function normalizeLine(s: string): string {
-  return String(s || "")
-    .trim()
-    .replace(/\s+/g, "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase();
+function safeStr(v: unknown): string {
+  return String(v ?? "");
 }
 
-function stateClass(state?: string): string {
-  const s = String(state || "").toLowerCase();
-  if (["valid","invalid","retry","queued","processing","error"].includes(s)) return s;
-  return "queued";
+function normalizeForSearch(v: string): string {
+  return v.toLowerCase();
 }
 
-function stateLabel(state?: string): string {
-  const s = String(state || "").toLowerCase();
-  return s || "unknown";
-}
-
-function valText(v: unknown): string {
-  if (v === true) return "true";
-  if (v === false) return "false";
-  if (v === null || v === undefined || v === "") return "";
-  return String(v);
-}
-
-function computeCountryCountsFromInput(text: string): Record<string, number> {
-  const lines = text.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-  const seen = new Set<string>();
-  const counts: Record<string, number> = {};
-
-  for (const line of lines) {
-    const v = normalizeLine(line);
-    if (!v || v.length < 2) continue;
-
-    let cc = v.slice(0, 2);
-    if (!/^[A-Z]{2}$/.test(cc)) continue;
-    if (cc === "GR") cc = "EL";
-
-    const key = cc + v.slice(2);
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    counts[cc] = (counts[cc] || 0) + 1;
+function uniqueCountryCodes(rows: ValidationRow[]): string[] {
+  const s = new Set<string>();
+  for (const r of rows) {
+    const cc = safeStr(r.country_code).trim().toUpperCase();
+    if (cc && cc.length === 2) s.add(cc);
   }
-  return counts;
+  return Array.from(s).sort();
+}
+
+function computeProgress(rows: ValidationRow[]) {
+  const total = rows.length;
+  let done = 0;
+  let valid = 0;
+  let invalid = 0;
+  let error = 0;
+  let queued = 0;
+
+  for (const r of rows) {
+    const st = safeStr(r.state).toLowerCase();
+    const v = r.valid;
+
+    if (st === "valid") {
+      done++;
+      valid++;
+    } else if (st === "invalid") {
+      done++;
+      invalid++;
+    } else if (st === "error") {
+      done++;
+      error++;
+    } else if (st === "retry" || st === "processing" || st === "queued") {
+      queued++;
+    } else if (v === true) {
+      done++;
+      valid++;
+    } else if (v === false) {
+      done++;
+      invalid++;
+    }
+  }
+
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
+  return { total, done, pct, valid, invalid, error, queued };
+}
+
+function compare(a: unknown, b: unknown) {
+  const aa = a ?? "";
+  const bb = b ?? "";
+  if (typeof aa === "number" && typeof bb === "number") return aa - bb;
+  const sa = String(aa).toLowerCase();
+  const sb = String(bb).toLowerCase();
+  if (sa < sb) return -1;
+  if (sa > sb) return 1;
+  return 0;
+}
+
+function sortRows(rows: ValidationRow[], key: SortKey, dir: SortDir): ValidationRow[] {
+  const out = [...rows];
+  out.sort((r1, r2) => {
+    let v1: unknown;
+    let v2: unknown;
+
+    switch (key) {
+      case "valid":
+        v1 = r1.valid === null ? "" : r1.valid ? "1" : "0";
+        v2 = r2.valid === null ? "" : r2.valid ? "1" : "0";
+        break;
+      default:
+        v1 = (r1 as any)[key];
+        v2 = (r2 as any)[key];
+    }
+
+    const c = compare(v1, v2);
+    return dir === "asc" ? c : -c;
+  });
+  return out;
+}
+
+function formatTime(ts: number | null): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleString("nl-NL");
 }
 
 export default function App() {
-  const [vatInput, setVatInput] = useState<string>("");
-  const [filter, setFilter] = useState<string>("");
-  const [rows, setRows] = useState<VatRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [vatText, setVatText] = useState<string>("");
+  const [filterText, setFilterText] = useState<string>("");
+  const [notes, setNotes] = useState<string>("");
 
-  const [frText, setFrText] = useState("-");
-  const [lastUpdate, setLastUpdate] = useState("-");
-  const [progressText, setProgressText] = useState("0/0");
+  const [rows, setRows] = useState<ValidationRow[]>([]);
+  const [frJobId, setFrJobId] = useState<string | null>(null);
+  const [frJobStatus, setFrJobStatus] = useState<string>("");
 
-  const [sortState, setSortState] = useState<SortState>({ colIndex: null, asc: true });
-  const [sortLabel, setSortLabel] = useState<string>("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<number | null>(null);
 
-  const [mapLegend, setMapLegend] = useState("—");
-  const [mapCount, setMapCount] = useState("0 countries");
-
-  const currentFrJobIdRef = useRef<string | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("vat_number");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const mapRef = useRef<L.Map | null>(null);
-  const markerLayerRef = useRef<L.LayerGroup | null>(null);
-
-  const countryCounts = useMemo(() => computeCountryCountsFromInput(vatInput), [vatInput]);
+  const mapDivRef = useRef<HTMLDivElement | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
 
   const filteredRows = useMemo(() => {
-    const q = filter.trim().toLowerCase();
+    const q = normalizeForSearch(filterText.trim());
     if (!q) return rows;
-    return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(q));
-  }, [rows, filter]);
 
-  const stats = useMemo(() => {
-    let total = rows.length;
-    let done = 0, vOk = 0, vBad = 0, pending = 0, err = 0;
+    return rows.filter((r) => {
+      const blob =
+        `${r.source} ${r.state} ${r.vat_number} ${r.country_code} ${r.valid} ${r.name} ${r.address} ${r.error} ${r.details}`;
+      return normalizeForSearch(blob).includes(q);
+    });
+  }, [rows, filterText]);
 
-    for (const r of rows) {
-      const st = String(r.state || "").toLowerCase();
-      if (st === "valid") { done++; vOk++; }
-      else if (st === "invalid") { done++; vBad++; }
-      else if (st === "error") { done++; err++; }
-      else if (st === "queued" || st === "retry" || st === "processing") { pending++; }
-    }
+  const sortedRows = useMemo(() => {
+    return sortRows(filteredRows, sortKey, sortDir);
+  }, [filteredRows, sortKey, sortDir]);
 
-    return { total, done, vOk, vBad, pending, err };
-  }, [rows]);
+  const progress = useMemo(() => computeProgress(rows), [rows]);
 
-  const progressPct = useMemo(() => {
-    if (!stats.total) return 0;
-    return Math.round((stats.done / stats.total) * 100);
-  }, [stats.total, stats.done]);
+  // Leaflet map init
+  useEffect(() => {
+    if (!mapDivRef.current) return;
+    if (mapRef.current) return;
 
-  function stopPolling() {
-    if (pollTimerRef.current) {
-      window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    currentFrJobIdRef.current = null;
-  }
+    const map = L.map(mapDivRef.current, {
+      center: [52.1, 5.1],
+      zoom: 4,
+      zoomControl: true,
+    });
 
-  async function pollFrJob(jobId: string) {
-    try {
-      const resp = await fetch(`/api/fr-job/${encodeURIComponent(jobId)}`);
-      if (!resp.ok) return;
-      const data = (await resp.json()) as FrJobResponse;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 18,
+    }).addTo(map);
 
-      setFrText(`${data.job.done}/${data.job.total} (${data.job.status})`);
+    const layer = L.layerGroup().addTo(map);
 
-      setRows((prev) => {
-        const map = new Map<string, VatRow>();
-        for (const r of prev) {
-          const k = r.vat_number || r.input || crypto.randomUUID();
-          map.set(k, r);
-        }
-        for (const r of (data.results || [])) {
-          const k = r.vat_number || r.input || crypto.randomUUID();
-          map.set(k, r);
-        }
-        return Array.from(map.values());
+    mapRef.current = map;
+    markersLayerRef.current = layer;
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      markersLayerRef.current = null;
+    };
+  }, []);
+
+  // Update map markers based on country codes in current rows
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = markersLayerRef.current;
+    if (!map || !layer) return;
+
+    layer.clearLayers();
+
+    const codes = uniqueCountryCodes(rows);
+
+    // Simple “label markers” around Europe-ish area (not accurate geography).
+    // Purpose: show which country codes are present.
+    const baseLat = 54;
+    const baseLng = -10;
+
+    codes.forEach((cc, i) => {
+      const lat = baseLat - Math.floor(i / 8) * 3.0;
+      const lng = baseLng + (i % 8) * 6.0;
+
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="
+          background:#0b2d4d;color:#fff;border-radius:10px;
+          padding:6px 8px;font-weight:700;font-size:12px;
+          border:1px solid rgba(255,255,255,.35);
+          box-shadow:0 6px 18px rgba(15,23,42,.12);
+        ">${cc}</div>`,
       });
 
-      setLastUpdate(new Date().toLocaleString("nl-NL"));
+      L.marker([lat, lng], { icon }).addTo(layer);
+    });
 
-      if (data.job.status === "completed") stopPolling();
-    } catch {
-      // ignore
+    if (codes.length > 0) {
+      map.setView([52.1, 5.1], 4);
     }
-  }
+  }, [rows]);
+
+  // Poll FR job if exists
+  useEffect(() => {
+    if (!frJobId) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    async function poll() {
+      try {
+        const resp = await fetch(`/api/fr-job/${encodeURIComponent(frJobId)}`, { method: "GET" });
+        if (!resp.ok) return;
+
+        const data = (await resp.json()) as FrJobResponse;
+        if (cancelled) return;
+
+        setFrJobStatus(`${data.job.status} (${data.job.done}/${data.job.total})`);
+
+        // Merge FR results into rows by vat_number
+        setRows((prev) => {
+          const mapByVat = new Map<string, ValidationRow>();
+          prev.forEach((r) => mapByVat.set(r.vat_number, r));
+
+          data.results.forEach((r) => {
+            mapByVat.set(r.vat_number, r);
+          });
+
+          return Array.from(mapByVat.values());
+        });
+
+        setLastUpdate(Date.now());
+
+        const status = safeStr(data.job.status).toLowerCase();
+        if (status === "completed") {
+          setIsRunning(false);
+          return; // stop polling
+        }
+
+        timer = window.setTimeout(poll, 2000);
+      } catch {
+        timer = window.setTimeout(poll, 3000);
+      }
+    }
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [frJobId]);
 
   async function onValidate() {
-    stopPolling();
-    setRows([]);
-    setFrText("-");
-    setLastUpdate("-");
-    setSortState({ colIndex: null, asc: true });
-    setSortLabel("");
-    setLoading(true);
+    const lines = vatText
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
 
-    const lines = vatInput.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (!lines.length) { setLoading(false); return; }
+    if (lines.length === 0) return;
+
+    setIsRunning(true);
+    setFrJobId(null);
+    setFrJobStatus("");
+    setLastUpdate(Date.now());
 
     try {
       const resp = await fetch("/api/validate-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vat_numbers: lines })
+        body: JSON.stringify({ vat_numbers: lines }),
       });
+
+      if (!resp.ok) {
+        setIsRunning(false);
+        return;
+      }
+
       const data = (await resp.json()) as ValidateBatchResponse;
 
       setRows(data.results || []);
-      setLastUpdate(new Date().toLocaleString("nl-NL"));
+      setLastUpdate(Date.now());
 
       if (data.fr_job_id) {
-        currentFrJobIdRef.current = data.fr_job_id;
-        await pollFrJob(data.fr_job_id);
-
-        pollTimerRef.current = window.setInterval(() => {
-          const id = currentFrJobIdRef.current;
-          if (id) void pollFrJob(id);
-        }, 3000);
+        setFrJobId(data.fr_job_id);
+        setFrJobStatus(`queued`);
+        // polling start via useEffect
       } else {
-        setFrText("-");
+        setIsRunning(false);
       }
-    } finally {
-      setLoading(false);
+    } catch {
+      setIsRunning(false);
     }
   }
 
   function onClear() {
-    stopPolling();
-    setVatInput("");
-    setFilter("");
+    setVatText("");
     setRows([]);
-    setFrText("-");
-    setLastUpdate("-");
-    setProgressText("0/0");
-    setSortState({ colIndex: null, asc: true });
-    setSortLabel("");
+    setFilterText("");
+    setFrJobId(null);
+    setFrJobStatus("");
+    setLastUpdate(null);
+    setIsRunning(false);
   }
 
-  function getCellText(r: VatRow, colIndex: number): string {
-    const cols: Array<string> = [
-      r.source ?? "",
-      r.state ?? "",
-      r.vat_number ?? "",
-      r.country_code ?? "",
-      valText(r.valid),
-      r.name ?? "",
-      r.address ?? "",
-      r.error ?? "",
-      r.details ?? ""
-    ];
-    return cols[colIndex] ?? "";
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir("asc");
   }
 
-  function sortByColumn(colIndex: number, label: string) {
-    setRows((prev) => {
-      const asc = (sortState.colIndex === colIndex) ? !sortState.asc : true;
-      setSortState({ colIndex, asc });
-      setSortLabel(`Sort: ${label} (${asc ? "asc" : "desc"})`);
-
-      const copy = [...prev];
-      copy.sort((a, b) => {
-        const ta = getCellText(a, colIndex).toLowerCase();
-        const tb = getCellText(b, colIndex).toLowerCase();
-        const cmp = ta.localeCompare(tb, "nl");
-        return asc ? cmp : -cmp;
-      });
-      return copy;
-    });
-  }
-
-  useEffect(() => {
-    const el = document.getElementById("countryMap");
-    if (!el) return;
-
-    try {
-      const map = L.map(el, {
-        zoomControl: false,
-        attributionControl: false,
-        dragging: true,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false,
-      }).setView([53.5, 10], 3);
-
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 6,
-        minZoom: 2
-      }).addTo(map);
-
-      const layer = L.layerGroup().addTo(map);
-
-      mapRef.current = map;
-      markerLayerRef.current = layer;
-    } catch {
-      el.innerHTML = "<div style='padding:12px;color:#6b7280;font-size:12px;'>Map unavailable</div>";
-    }
-
-    return () => {
-      if (mapRef.current) mapRef.current.remove();
-      mapRef.current = null;
-      markerLayerRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const entries = Object.entries(countryCounts).sort((a,b) => b[1] - a[1]);
-    setMapCount(`${entries.length} countries`);
-
-    if (!entries.length) {
-      setMapLegend("—");
-    } else {
-      const top = entries.slice(0, 6).map(([cc,n]) => `${cc}(${n})`).join(" · ");
-      const more = entries.length > 6 ? ` +${entries.length - 6}` : "";
-      setMapLegend(top + more);
-    }
-
-    const map = mapRef.current;
-    const layer = markerLayerRef.current;
-    if (!map || !layer) return;
-
-    layer.clearLayers();
-    const markers: L.Layer[] = [];
-
-    for (const [cc, n] of Object.entries(countryCounts)) {
-      const c = COUNTRY_COORDS[cc];
-      if (!c) continue;
-
-      const radius = 4 + Math.min(10, Math.round(Math.sqrt(n) * 3));
-      const m = L.circleMarker([c.lat, c.lon], {
-        radius,
-        color: "#0b2e5f",
-        weight: 1,
-        fillColor: "#2bb3e6",
-        fillOpacity: 0.85
-      });
-
-      m.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-      m.addTo(layer);
-      markers.push(m);
-    }
-
-    if (markers.length) {
-      const group = L.featureGroup(markers as any);
-      map.fitBounds(group.getBounds().pad(0.25), { animate: false, maxZoom: 4 });
-    } else {
-      map.setView([53.5, 10], 3, { animate: false } as any);
-    }
-  }, [countryCounts]);
-
-  useEffect(() => {
-    setProgressText(`${stats.done}/${stats.total}`);
-  }, [stats.done, stats.total]);
+  const frBadgeDot =
+    frJobId && (frJobStatus.toLowerCase().includes("running") || frJobStatus.toLowerCase().includes("queued"))
+      ? "dotRun"
+      : frJobId && frJobStatus.toLowerCase().includes("completed")
+        ? "dotOk"
+        : frJobId
+          ? "dotWarn"
+          : "";
 
   return (
-    <>
-      <div className="banner">
-        <div className="banner-accent"></div>
-        <div className="banner-inner">
-          <div className="brand">
-            <div className="mark" aria-label="RSM">
-              <div className="mark-bars" aria-hidden="true">
-                <span></span><span></span><span></span>
-              </div>
-              <div className="mark-text">RSM</div>
-            </div>
-            <div className="title">VAT validation</div>
-          </div>
-        </div>
-      </div>
+    <div className="page">
+      <div className="banner">VAT validation</div>
 
-      <div className="wrap">
-        <section className="grid">
-          <div className="card">
-            <h2>VAT numbers</h2>
-            <p className="hint">Paste VAT numbers with country prefix (1 per line). Duplicates are ignored.</p>
+      <div className="container">
+        <div className="topRow">
+          <div className="card panel">
+            <div className="panelHeader">
+              <h2 className="h2">VAT numbers</h2>
+              <div className="small">1 per regel (bv. NL123..., FR123...)</div>
+            </div>
 
             <textarea
-              value={vatInput}
-              onChange={(e) => setVatInput(e.target.value)}
-              placeholder={"FR23450327580\nDE123456789\nRO12345678"}
+              className="vatInput"
+              value={vatText}
+              onChange={(e) => setVatText(e.target.value)}
+              placeholder="Plak hier VAT nummers, 1 per regel"
             />
 
-            <div className="row">
-              <button className="btn btn-primary" onClick={() => void onValidate()} disabled={loading}>
-                {loading ? "Validating..." : "Validate"}
+            <div className="controlsRow">
+              <button className="btn" onClick={onValidate} disabled={isRunning || vatText.trim().length === 0}>
+                Validate
               </button>
-              <button className="btn btn-secondary" onClick={onClear} disabled={loading}>
+              <button className="btn btnSecondary" onClick={onClear} disabled={isRunning && rows.length > 0}>
                 Clear
               </button>
             </div>
+          </div>
 
-            <div className="progress" aria-label="Progress bar">
-              <div className="bar" style={{ width: `${progressPct}%` }} />
+          <div className="card panel">
+            <div className="panelHeader">
+              <h2 className="h2">Filter & Notes</h2>
+              <div className="small">Zoek in resultaten + notities</div>
             </div>
 
-            <div className="stats">
-              <div className="stat"><span>Total</span><b>{stats.total}</b></div>
-              <div className="stat"><span>Done</span><b>{stats.done}</b></div>
-              <div className="stat"><span>Valid</span><b>{stats.vOk}</b></div>
-              <div className="stat"><span>Invalid</span><b>{stats.vBad}</b></div>
-              <div className="stat"><span>Pending</span><b>{stats.pending}</b></div>
-              <div className="stat"><span>Error</span><b>{stats.err}</b></div>
+            <div className="noteBox">
+              <div>
+                <div className="noteLabel">Filter</div>
+                <input
+                  className="input"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder="Zoek (VAT, naam, error, landcode...)"
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+                <div className="noteLabel">Notes</div>
+                <textarea
+                  className="noteArea"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Notities..."
+                />
+              </div>
             </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="statusRow">
+            <div className="badge">
+              <span className={`dot ${isRunning ? "dotRun" : "dotOk"}`} />
+              <span>{isRunning ? "Running" : "Idle"}</span>
+            </div>
+
+            <div className="badge">
+              <span className={`dot ${rows.length ? "dotOk" : ""}`} />
+              <span>
+                Results: <b>{rows.length}</b> (done {progress.done}/{progress.total})
+              </span>
+            </div>
+
+            <div className="badge">
+              <span className={`dot ${frBadgeDot}`} />
+              <span>
+                FR job: <b>{frJobId ? frJobStatus || "..." : "n/a"}</b>
+              </span>
+            </div>
+
+            <div className="badge">
+              <span className="dot" />
+              <span>
+                Last update: <b>{lastUpdate ? formatTime(lastUpdate) : "-"}</b>
+              </span>
+            </div>
+          </div>
+
+          <div className="progressWrap">
+            <div className="small" style={{ marginBottom: 8 }}>
+              Progress: <b>{progress.pct}%</b> — valid {progress.valid}, invalid {progress.invalid}, error{" "}
+              {progress.error}, queued {progress.queued}
+            </div>
+            <div className="progressBar">
+              <div className="progressFill" style={{ width: `${progress.pct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="lowerGrid">
+          <div className="card">
+            <div className="panelHeader">
+              <h2 className="h2">Countries</h2>
+              <div className="small">Op basis van eerste 2 letters</div>
+            </div>
+            <div ref={mapDivRef} className="mapBox" />
           </div>
 
           <div className="card">
-            <h2>Filter & notes</h2>
-            <div className="filterBox">
-              <input
-                type="text"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter (searches all columns)..."
-              />
-
-              <div className="callout">
-                <b>France (FR)</b><br/>
-                FR is processed in a background job (token + polling). Details shows retry timing and error codes.
+            <div className="panelHeader">
+              <h2 className="h2">Results</h2>
+              <div className="small">
+                Klik header voor sort ({sortKey} {sortDir})
               </div>
-
-              <div className="mapbox">
-                <div className="mapbox-head">
-                  <div className="mapbox-title">VAT origins</div>
-                  <div className="mapbox-sub">{mapCount}</div>
-                </div>
-                <div id="countryMap" aria-label="Map of VAT origins"></div>
-                <div className="mapbox-foot">
-                  <div id="mapLegend">{mapLegend}</div>
-                  <div className="map-attrib">
-                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OSM</a>
-                  </div>
-                </div>
-              </div>
-
-              <div className="chipsRow">
-                <div className="chip"><span>Progress</span><b>{progressText}</b></div>
-                <div className="chip"><span>FR job</span><b>{frText}</b></div>
-                <div className="chip"><span>Last update</span><b>{lastUpdate}</b></div>
-              </div>
-
-              <p className="hint" style={{ margin: 0 }}>Sorting: click table headers.</p>
             </div>
-          </div>
-        </section>
 
-        <div className="tableWrap">
-          <div className="tableHeader">
-            <div>
-              <strong>Results</strong>{" "}
-              <span className="muted">• {filteredRows.length} rows</span>
-            </div>
-            <div className="muted">{sortLabel}</div>
-          </div>
-
-          <div style={{ overflow: "auto", maxHeight: 600 }}>
-            <table>
-              <thead>
-                <tr>
-                  <th onClick={() => sortByColumn(0, "Source")}>Source</th>
-                  <th onClick={() => sortByColumn(1, "State")}>State</th>
-                  <th onClick={() => sortByColumn(2, "VAT")}>VAT</th>
-                  <th onClick={() => sortByColumn(3, "Country")}>Country</th>
-                  <th onClick={() => sortByColumn(4, "Valid")}>Valid</th>
-                  <th onClick={() => sortByColumn(5, "Name")}>Name</th>
-                  <th onClick={() => sortByColumn(6, "Address")}>Address</th>
-                  <th onClick={() => sortByColumn(7, "Error")}>Error</th>
-                  <th onClick={() => sortByColumn(8, "Details")}>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRows.map((r, idx) => {
-                  const key = r.vat_number || r.input || String(idx);
-                  const st = stateClass(r.state);
-                  return (
-                    <tr key={key} data-state={st}>
-                      <td>{r.source ?? ""}</td>
-                      <td className="nowrap">
-                        <span className={`pill ${st}`}><i></i>{stateLabel(r.state)}</span>
-                      </td>
-                      <td className="mono nowrap">{r.vat_number ?? ""}</td>
-                      <td className="mono nowrap">{r.country_code ?? ""}</td>
-                      <td className="mono nowrap">{valText(r.valid)}</td>
-                      <td>{r.name ?? ""}</td>
-                      <td>{r.address ?? ""}</td>
-                      <td className="mono nowrap">{r.error ?? ""}</td>
-                      <td>{r.details ?? ""}</td>
+            <div className="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th onClick={() => toggleSort("source")}>Source</th>
+                    <th onClick={() => toggleSort("state")}>State</th>
+                    <th onClick={() => toggleSort("vat_number")}>VAT</th>
+                    <th onClick={() => toggleSort("country_code")}>Country</th>
+                    <th onClick={() => toggleSort("valid")}>Valid</th>
+                    <th onClick={() => toggleSort("name")}>Name</th>
+                    <th onClick={() => toggleSort("address")}>Address</th>
+                    <th onClick={() => toggleSort("error")}>Error</th>
+                    <th onClick={() => toggleSort("details")}>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.map((r, idx) => (
+                    <tr key={`${r.vat_number}-${idx}`}>
+                      <td>{r.source}</td>
+                      <td>{r.state}</td>
+                      <td className="mono">{r.vat_number}</td>
+                      <td className="mono">{r.country_code}</td>
+                      <td>{r.valid === null ? "" : r.valid ? "true" : "false"}</td>
+                      <td>{r.name}</td>
+                      <td>{r.address}</td>
+                      <td className="mono">{r.error}</td>
+                      <td>{r.details}</td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                  {sortedRows.length === 0 && (
+                    <tr>
+                      <td colSpan={9} style={{ color: "#64748b" }}>
+                        No results
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="small" style={{ marginTop: 10 }}>
+              Tip: Filter werkt op alle kolommen tegelijk.
+            </div>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
