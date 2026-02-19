@@ -248,7 +248,6 @@ export default function App() {
         doubleClickZoom: false,
         boxZoom: false,
         keyboard: false,
-        tap: false,
       }).setView([53.5, 10], 3);
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
