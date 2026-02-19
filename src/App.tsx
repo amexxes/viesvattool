@@ -448,52 +448,35 @@ useEffect(() => {
 
   layer.clearLayers();
 
-  const hasGeo = !!geoJsonRef.current;
+layer.clearLayers();
 
+if (geoJsonRef.current) {
+  L.geoJSON(geoJsonRef.current as any, {
+    style: (feature: any) => {
+      const cc = String(feature?.properties?.ISO_A2 || "").toUpperCase();
+      const n = cc ? (countryCounts[cc] || 0) : 0;
 
-    if (hasGeo) {
-      const gj = L.geoJSON(geoJsonRef.current as any, {
-        style: (feature: any) => {
-          const cc = String(feature?.properties?.ISO_A2 || feature?.properties?.iso_a2 || "").toUpperCase();
-          const n = cc ? (countryCounts[cc] || 0) : 0;
-          return {
-            color: "#0b2e5f",
-            weight: 1,
-            opacity: 0.65,
-            fillColor: getFillColor(n),
-            fillOpacity: n ? 0.85 : 0.08,
-          };
-        },
-        onEachFeature: (feature: any, lyr: any) => {
-          const cc = String(feature?.properties?.ISO_A2 || feature?.properties?.iso_a2 || "").toUpperCase();
-          if (!cc) return;
-          const n = countryCounts[cc] || 0;
-          lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-        },
+      return {
+        color: "#0b2e5f",
+        weight: 0.8,
+        opacity: 0.7,
+        fillColor: getFillColor(n),
+        fillOpacity: n ? 0.85 : 0.05,
+      };
+    },
+    onEachFeature: (feature: any, layer: any) => {
+      const cc = String(feature?.properties?.ISO_A2 || "").toUpperCase();
+      if (!cc) return;
+
+      const n = countryCounts[cc] || 0;
+      layer.bindTooltip(`${cc} • ${n}`, {
+        direction: "top",
+        opacity: 0.9,
       });
+    },
+  }).addTo(layer);
+}
 
-      gj.addTo(layer);
-    } else {
-      const markers: L.Layer[] = [];
-
-      for (const [cc, n] of Object.entries(countryCounts)) {
-        const c = COUNTRY_COORDS[cc];
-        if (!c) continue;
-
-        const radius = 4 + Math.min(10, Math.round(Math.sqrt(n) * 3));
-        const m = L.circleMarker([c.lat, c.lon], {
-          radius,
-          color: "#0b2e5f",
-          weight: 1,
-          fillColor: "#2bb3e6",
-          fillOpacity: 0.85
-        });
-
-        m.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-        m.addTo(layer);
-        markers.push(m);
-      }
-    }
 
     const coords = Object.entries(countryCounts)
       .filter(([cc, n]) => n > 0 && COUNTRY_COORDS[cc])
