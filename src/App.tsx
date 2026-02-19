@@ -426,6 +426,13 @@ useEffect(() => {
     markerLayerRef.current = null;
   };
 }, []);
+// voeg deze helper toe (boven je useEffect)
+function mapIso2ToVatCc(raw: unknown): string {
+  let cc = String(raw || "").toUpperCase().trim();
+  if (cc === "GR") cc = "EL";          // VIES gebruikt EL voor Griekenland
+  if (cc === "GB") cc = "XI";          // optioneel: kleur NI mee op UK polygon (als je XI gebruikt)
+  return cc;
+}
 
 useEffect(() => {
   const entries = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]);
@@ -453,8 +460,18 @@ layer.clearLayers();
 if (geoJsonRef.current) {
   L.geoJSON(geoJsonRef.current as any, {
     style: (feature: any) => {
-      const cc = String(feature?.properties?.ISO_A2 || "").toUpperCase();
-      const n = cc ? (countryCounts[cc] || 0) : 0;
+const raw =
+  feature?.properties?.ISO_A2 ??
+  feature?.properties?.iso_a2 ??
+  feature?.properties?.ISO2 ??
+  feature?.properties?.iso2 ??
+  feature?.properties?.["alpha-2"] ??
+  feature?.properties?.["Alpha-2"] ??
+  feature?.properties?.["ISO3166-1-Alpha-2"];
+
+const cc = String(raw || "").toUpperCase();
+const n = cc ? (countryCounts[cc] || 0) : 0;
+
 
       return {
         color: "#0b2e5f",
@@ -465,10 +482,19 @@ if (geoJsonRef.current) {
       };
     },
     onEachFeature: (feature: any, layer: any) => {
-      const cc = String(feature?.properties?.ISO_A2 || "").toUpperCase();
-      if (!cc) return;
+const raw =
+  feature?.properties?.ISO_A2 ??
+  feature?.properties?.iso_a2 ??
+  feature?.properties?.ISO2 ??
+  feature?.properties?.iso2 ??
+  feature?.properties?.["alpha-2"] ??
+  feature?.properties?.["Alpha-2"] ??
+  feature?.properties?.["ISO3166-1-Alpha-2"];
 
-      const n = countryCounts[cc] || 0;
+const cc = String(raw || "").toUpperCase();
+if (!cc) return;
+const n = countryCounts[cc] || 0;
+
       layer.bindTooltip(`${cc} • ${n}`, {
         direction: "top",
         opacity: 0.9,
