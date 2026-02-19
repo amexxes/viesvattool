@@ -218,13 +218,12 @@ export default function App() {
     return cols[colIndex] ?? "";
   }
 
-  function sortByColumn(colIndex: number, label: string) {
-    setRows((prev) => {
-      const asc = (sortState.colIndex === colIndex) ? !sortState.asc : true;
-      setSortState({ colIndex, asc });
-      setSortLabel(`Sort: ${label} (${asc ? "asc" : "desc"})`);
+function sortByColumn(colIndex: number, label: string) {
+  setSortState((prevSort) => {
+    const asc = prevSort.colIndex === colIndex ? !prevSort.asc : true;
 
-      const copy = [...prev];
+    setRows((prevRows) => {
+      const copy = [...prevRows];
       copy.sort((a, b) => {
         const ta = getCellText(a, colIndex).toLowerCase();
         const tb = getCellText(b, colIndex).toLowerCase();
@@ -233,7 +232,12 @@ export default function App() {
       });
       return copy;
     });
-  }
+
+    setSortLabel(`Sort: ${label} (${asc ? "asc" : "desc"})`);
+    return { colIndex, asc };
+  });
+}
+
 
   useEffect(() => {
     const el = document.getElementById("countryMap");
