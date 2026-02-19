@@ -365,87 +365,91 @@ export default function App() {
     }));
   }
 
-  function getFillColor(n: number) {
-    if (n >= 50) return "#0b2e5f";
-    if (n >= 20) return "#1f6aa5";
-    if (n >= 10) return "#2bb3e6";
-    if (n >= 5) return "#7dd3f7";
-    if (n >= 1) return "#cfefff";
-    return "#ffffff";
+function getFillColor(n: number) {
+  if (n >= 50) return "#0b2e5f";
+  if (n >= 20) return "#1f6aa5";
+  if (n >= 10) return "#2bb3e6";
+  if (n >= 5) return "#7dd3f7";
+  if (n >= 1) return "#cfefff";
+  return "#ffffff";
+}
+
+// --- Map init ---
+useEffect(() => {
+  const el = document.getElementById("countryMap");
+  if (!el) return;
+
+  try {
+    const map = L.map(el, {
+      zoomControl: false,
+      attributionControl: false,
+      dragging: true,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+    }).setView([53.5, 10], 3);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 6,
+      minZoom: 2,
+    }).addTo(map);
+
+    const layer = L.layerGroup().addTo(map);
+
+    mapRef.current = map;
+    markerLayerRef.current = layer;
+
+    fetch("/countries.geojson")
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`countries.geojson HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((j) => {
+        console.log("countries.geojson loaded", j);
+        geoJsonRef.current = j;
+        setMapGeoVersion((v) => v + 1);
+      })
+      .catch((e) => {
+        console.error("countries.geojson failed", e);
+        geoJsonRef.current = null;
+        setMapGeoVersion((v) => v + 1);
+      });
+  } catch {
+    el.innerHTML =
+      "<div style='padding:12px;color:#6b7280;font-size:12px;'>Map unavailable</div>";
   }
 
-  // --- Map init ---
-  useEffect(() => {
-    const el = document.getElementById("countryMap");
-    if (!el) return;
+  return () => {
+    if (mapRef.current) mapRef.current.remove();
+    mapRef.current = null;
+    markerLayerRef.current = null;
+  };
+}, []);
 
-    try {
-      const map = L.map(el, {
-        zoomControl: false,
-        attributionControl: false,
-        dragging: true,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false,
-      }).setView([53.5, 10], 3);
+useEffect(() => {
+  const entries = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]);
+  setMapCount(`${entries.length} countries`);
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 6,
-        minZoom: 2
-      }).addTo(map);
+  if (!entries.length) {
+    setMapLegend("—");
+  } else {
+    const top = entries
+      .slice(0, 6)
+      .map(([cc, n]) => `${cc}(${n})`)
+      .join(" · ");
+    const more = entries.length > 6 ? ` +${entries.length - 6}` : "";
+    setMapLegend(top + more);
+  }
 
-      const layer = L.layerGroup().addTo(map);
+  const map = mapRef.current;
+  const layer = markerLayerRef.current;
+  if (!map || !layer) return;
 
-      mapRef.current = map;
-      markerLayerRef.current = layer;
+  layer.clearLayers();
 
-      fetch("/countries.geojson")
-        .then(async (r) => {
-          if (!r.ok) throw new Error(`countries.geojson HTTP ${r.status}`);
-          return r.json();
-        })
-        .then((j) => {
-          console.log("countries.geojson loaded", j);
-          geoJsonRef.current = j;
-          setMapGeoVersion((v) => v + 1);
-        })
-        .catch((e) => {
-          console.error("countries.geojson failed", e);
-          geoJsonRef.current = null;
-          setMapGeoVersion((v) => v + 1);
-        });
-        .catch(() => {});
-    } catch {
-      el.innerHTML = "<div style='padding:12px;color:#6b7280;font-size:12px;'>Map unavailable</div>";
-    }
+  const hasGeo = !!geoJsonRef.current;
 
-    return () => {
-      if (mapRef.current) mapRef.current.remove();
-      mapRef.current = null;
-      markerLayerRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const entries = Object.entries(countryCounts).sort((a,b) => b[1] - a[1]);
-    setMapCount(`${entries.length} countries`);
-
-    if (!entries.length) {
-      setMapLegend("—");
-    } else {
-      const top = entries.slice(0, 6).map(([cc,n]) => `${cc}(${n})`).join(" · ");
-      const more = entries.length > 6 ? ` +${entries.length - 6}` : "";
-      setMapLegend(top + more);
-    }
-
-    const map = mapRef.current;
-    const layer = markerLayerRef.current;
-    if (!map || !layer) return;
-
-    layer.clearLayers();
-
-    const hasGeo = !!geoJsonRef.current;
 
     if (hasGeo) {
       const gj = L.geoJSON(geoJsonRef.current as any, {
