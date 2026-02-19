@@ -502,7 +502,7 @@ L.geoJSON(geoJsonRef.current as any, {
   },
 }).addTo(layer);
 
-
+}
 
     const coords = Object.entries(countryCounts)
       .filter(([cc, n]) => n > 0 && COUNTRY_COORDS[cc])
