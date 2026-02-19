@@ -3,6 +3,38 @@ import L from "leaflet";
 import type { FrJobResponse, ValidateBatchResponse, VatRow } from "./types";
 
 type SortState = { colIndex: number | null; asc: boolean };
+const ERROR_MAP: Record<string, string> = {
+  MS_MAX_CONCURRENT_REQ: "Member State (FR) heeft te veel gelijktijdige checks; we proberen later opnieuw.",
+  MS_UNAVAILABLE: "Member State is tijdelijk niet beschikbaar; we proberen later opnieuw.",
+  TIMEOUT: "Timeout richting VIES; we proberen later opnieuw.",
+  GLOBAL_MAX_CONCURRENT_REQ: "VIES is druk; we proberen later opnieuw.",
+  SERVICE_UNAVAILABLE: "VIES service unavailable; we proberen later opnieuw.",
+};
+
+function humanError(code?: string, fallback?: string) {
+  const c = (code || "").trim();
+  return ERROR_MAP[c] || fallback || c || "";
+}
+
+function formatEta(ts?: number) {
+  if (!ts) return "";
+  const diff = Math.max(0, ts - Date.now());
+  const s = Math.round(diff / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  return `${m}m`;
+}
+
+function validateFormat(vatNumberWithPrefix: string) {
+  const v = normalizeLine(vatNumberWithPrefix);
+  if (v.length < 3) return { ok: false, reason: "Too short" };
+  const cc = v.slice(0, 2);
+  if (!/^[A-Z]{2}$/.test(cc)) return { ok: false, reason: "Missing country prefix" };
+  const rest = v.slice(2);
+  if (!rest) return { ok: false, reason: "Missing VAT digits" };
+  if (!/^[A-Z0-9]+$/.test(rest)) return { ok: false, reason: "Invalid characters" };
+  return { ok: true, reason: "" };
+}
 
 const COUNTRY_COORDS: Record<string, { lat: number; lon: number }> = {
   AT:{lat:48.2082,lon:16.3738}, BE:{lat:50.8503,lon:4.3517}, BG:{lat:42.6977,lon:23.3219},
