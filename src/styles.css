@@ -288,3 +288,38 @@ tbody tr:hover td{ background: rgba(11,46,95,.02); }
   thead th{ position: static; }
   .chipsRow{ grid-template-columns: 1fr; }
 }
+/* Table stays within viewport */
+.tableWrap { max-width: 100%; }
+.tableWrap table { width: 100%; table-layout: fixed; }
+.tableWrap th, .tableWrap td { overflow: hidden; text-overflow: ellipsis; }
+.tableWrap td { word-break: break-word; }
+.tableWrap .col-small { width: 110px; }
+.tableWrap .col-medium { width: 160px; }
+.tableWrap .col-large { width: 260px; }
+
+/* Expand row details nicely */
+.rowDetails {
+  padding: 10px 10px 14px;
+  background: rgba(11,46,95,.02);
+  border-top: 1px dashed rgba(229,231,235,.9);
+}
+.kv {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.kv b { color: var(--text); font-weight: 700; }
+.badgeTag {
+  display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-weight: 800;
+  font-size: 12px;
+  background: #fff;
+}
+.badgeTag.whitelist { background: rgba(26,167,91,.08); border-color: rgba(26,167,91,.22); color:#0b5a2f; }
+.badgeTag.blacklist { background: rgba(217,45,32,.08); border-color: rgba(217,45,32,.22); color:#7a1b14; }
+
