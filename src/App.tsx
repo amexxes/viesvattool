@@ -458,50 +458,50 @@ useEffect(() => {
 layer.clearLayers();
 
 if (geoJsonRef.current) {
-  L.geoJSON(geoJsonRef.current as any, {
-    style: (feature: any) => {
-const raw =
-  feature?.properties?.ISO_A2 ??
-  feature?.properties?.iso_a2 ??
-  feature?.properties?.ISO2 ??
-  feature?.properties?.iso2 ??
-  feature?.properties?.["alpha-2"] ??
-  feature?.properties?.["Alpha-2"] ??
-  feature?.properties?.["ISO3166-1-Alpha-2"];
+L.geoJSON(geoJsonRef.current as any, {
+  style: (feature: any) => {
+    const raw =
+      feature?.properties?.ISO_A2 ??
+      feature?.properties?.iso_a2 ??
+      feature?.properties?.ISO2 ??
+      feature?.properties?.iso2 ??
+      feature?.properties?.["alpha-2"] ??
+      feature?.properties?.["Alpha-2"] ??
+      feature?.properties?.["ISO3166-1-Alpha-2"];
 
-const cc = String(raw || "").toUpperCase();
-const n = cc ? (countryCounts[cc] || 0) : 0;
+    let cc = String(raw || "").toUpperCase().trim();
+    if (cc === "GR") cc = "EL";
 
+    const n = cc ? (countryCounts[cc] || 0) : 0;
 
-      return {
-        color: "#0b2e5f",
-        weight: 0.8,
-        opacity: 0.7,
-        fillColor: getFillColor(n),
-        fillOpacity: n ? 0.85 : 0.05,
-      };
-    },
-    onEachFeature: (feature: any, layer: any) => {
-const raw =
-  feature?.properties?.ISO_A2 ??
-  feature?.properties?.iso_a2 ??
-  feature?.properties?.ISO2 ??
-  feature?.properties?.iso2 ??
-  feature?.properties?.["alpha-2"] ??
-  feature?.properties?.["Alpha-2"] ??
-  feature?.properties?.["ISO3166-1-Alpha-2"];
+    return {
+      color: "#0b2e5f",
+      weight: 0.8,
+      opacity: 0.7,
+      fillColor: getFillColor(n),
+      fillOpacity: n ? 0.85 : 0.12,
+    };
+  },
+  onEachFeature: (feature: any, lyr: any) => {
+    const raw =
+      feature?.properties?.ISO_A2 ??
+      feature?.properties?.iso_a2 ??
+      feature?.properties?.ISO2 ??
+      feature?.properties?.iso2 ??
+      feature?.properties?.["alpha-2"] ??
+      feature?.properties?.["Alpha-2"] ??
+      feature?.properties?.["ISO3166-1-Alpha-2"];
 
-const cc = String(raw || "").toUpperCase();
-if (!cc) return;
-const n = countryCounts[cc] || 0;
+    let cc = String(raw || "").toUpperCase().trim();
+    if (cc === "GR") cc = "EL";
 
-      layer.bindTooltip(`${cc} • ${n}`, {
-        direction: "top",
-        opacity: 0.9,
-      });
-    },
-  }).addTo(layer);
-}
+    if (!cc) return;
+    const n = countryCounts[cc] || 0;
+
+    lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
+  },
+}).addTo(layer);
+
 
 
     const coords = Object.entries(countryCounts)
