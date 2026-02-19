@@ -20,7 +20,7 @@ const COUNTRY_COORDS: Record<string, { lat: number; lon: number }> = {
 };
 
 const ERROR_MAP: Record<string, string> = {
-  MS_MAX_CONCURRENT_REQ: "Member State (FR) heeft te veel gelijktijdige checks; we proberen later opnieuw.",
+  MS_MAX_CONCURRENT_REQ: "Member State heeft te veel gelijktijdige checks; we proberen later opnieuw.",
   MS_UNAVAILABLE: "Member State is tijdelijk niet beschikbaar; we proberen later opnieuw.",
   TIMEOUT: "Timeout richting VIES; we proberen later opnieuw.",
   GLOBAL_MAX_CONCURRENT_REQ: "VIES is druk; we proberen later opnieuw.",
