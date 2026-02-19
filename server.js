@@ -1,5 +1,4 @@
 import express from "express";
-import fetch from "node-fetch";
 import Database from "better-sqlite3";
 import https from "https";
 import { randomUUID } from "crypto";
