@@ -11,6 +11,7 @@ app.use(express.json({ limit: "1mb" }));
 /**
  * =========================================================
  * EC VIES REST
+ * - Node 18+ heeft fetch ingebouwd, dus geen node-fetch import.
  * =========================================================
  */
 const VIES_BASE = "https://ec.europa.eu/taxation_customs/vies/rest-api";
@@ -20,7 +21,7 @@ const VIES_STATUS_URL = `${VIES_BASE}/check-status`;
 const PORT = process.env.PORT || 3000;
 
 /**
- * Optional requester fields (leave empty if you don't want them)
+ * Optional requester fields
  */
 const REQUESTER_MEMBER_STATE_CODE = (process.env.REQUESTER_MEMBER_STATE_CODE || "").trim().toUpperCase();
 const REQUESTER_NUMBER = (process.env.REQUESTER_NUMBER || "").trim().toUpperCase();
@@ -33,36 +34,31 @@ const REQUESTER_NUMBER = (process.env.REQUESTER_NUMBER || "").trim().toUpperCase
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
- * NON-FR: slower + retries on MS_MAX_CONCURRENT_REQ
- * - Per-country sequential processing (prevents self-triggering MS_MAX)
- * - Country streams in small parallel
- * - Start-time limiter (extra latency)
+ * NON-FR: slower + retries
  */
 const NON_FR_COUNTRY_WORKERS = 3;
 const NON_FR_TIMEOUT_MS = 20000;
 const NON_FR_MAX_ATTEMPTS = 5;
 
-// baseline spacing (increased latency)
 const NON_FR_MIN_GAP_GLOBAL_MS = 650;
 const NON_FR_MIN_GAP_PER_COUNTRY_MS = 1600;
 
-// extra conservative for specific countries that also hit MS_MAX often
 const NON_FR_COUNTRY_OVERRIDES = {
-  DE: { minGapPerCountryMs: 2600 }, // Germany
-  RO: { minGapPerCountryMs: 2600 }, // Romania
+  DE: { minGapPerCountryMs: 2600 },
+  RO: { minGapPerCountryMs: 2600 },
 };
 
 const NON_FR_MS_MAX_BACKOFF_S = [6, 12, 20, 30, 45];
 const NON_FR_OTHER_BACKOFF_S = [2, 4, 8, 12, 18];
 
 /**
- * FR: async worker “batch-like” job system (UNCHANGED)
+ * FR: sneller attempt/retry (aangepast)
  */
-const FR_MIN_GAP_MS = 2500;
+const FR_MIN_GAP_MS = 1200;
 const FR_TIMEOUT_MS = 20000;
 
-const FR_MS_MAX_BACKOFF_S = [10, 20, 40, 60, 90, 120, 180, 240, 300];
-const FR_OTHER_BACKOFF_S = [5, 10, 20, 30, 60, 90, 120];
+const FR_MS_MAX_BACKOFF_S = [5, 10, 20, 40, 60, 90, 120, 180, 240, 300];
+const FR_OTHER_BACKOFF_S = [2, 5, 10, 20, 30, 45, 60, 90, 120];
 
 const FR_GLOBAL_MS_MAX_COOLDOWN_MS = 8000;
 
@@ -318,7 +314,7 @@ async function callViesCheckVat(countryCode, vatNumber, timeoutMs, agent) {
 
 /**
  * =========================================================
- * Non-FR increased latency: reservation-based start limiter
+ * Non-FR limiter + retry
  * =========================================================
  */
 let nonFrScheduleLock = Promise.resolve();
@@ -380,7 +376,7 @@ async function callViesNonFrWithRetry(countryCode, vatNumber) {
 
 /**
  * =========================================================
- * FR async “batch-like” job system (UNCHANGED)
+ * FR async job system
  * =========================================================
  */
 let frWorkerRunning = false;
@@ -437,7 +433,7 @@ function frPickNextDueItem() {
   const now = Date.now();
   return db
     .prepare(`
-      SELECT job_id, vat_key, country_code, vat_number, input, state, attempts, next_retry_at
+      SELECT job_id, vat_key, country_code, vat_number, input, state, attempts, next_retry_at, last_code, last_message
       FROM fr_job_items
       WHERE (state='queued' OR state='retry')
         AND (next_retry_at IS NULL OR next_retry_at <= ?)
@@ -552,7 +548,8 @@ async function runFrWorker() {
 
       if (vowAvailable === false || (frRow && frRow.availability && frRow.availability !== "Available")) {
         const attempts = item.attempts + 1;
-        const next = Date.now() + jitter(60 * 1000, 3000);
+        // sneller dan 60s
+        const next = Date.now() + jitter(15 * 1000, 2000);
         frUpdateItem(item.job_id, item.vat_key, {
           state: "retry",
           attempts,
@@ -697,11 +694,6 @@ function resumeFrWorkerIfNeeded() {
   }
 }
 
-/**
- * =========================================================
- * Non-FR: per-country sequential, countries in small parallel
- * =========================================================
- */
 async function mapLimit(items, limit, mapper) {
   const results = new Array(items.length);
   let i = 0;
@@ -945,7 +937,7 @@ app.get("/api/health", (_req, res) => {
 
 /**
  * =========================================================
- * Serve Vite dist/ (React)
+ * Serve Vite dist/
  * =========================================================
  */
 const __filename = fileURLToPath(import.meta.url);
@@ -953,7 +945,6 @@ const __dirname = path.dirname(__filename);
 
 app.use(express.static(path.join(__dirname, "dist")));
 
-// SPA fallback (niet voor /api)
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
   res.sendFile(path.join(__dirname, "dist", "index.html"));
