@@ -1,3 +1,4 @@
+// /src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import type { FrJobResponse, ValidateBatchResponse, VatRow } from "./types";
@@ -120,6 +121,7 @@ export default function App() {
 
   const [mapLegend, setMapLegend] = useState("—");
   const [mapCount, setMapCount] = useState("0 countries");
+  const [mapGeoVersion, setMapGeoVersion] = useState(0);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
@@ -144,6 +146,7 @@ export default function App() {
 
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
+  const geoJsonRef = useRef<any | null>(null);
 
   const countryCounts = useMemo(() => computeCountryCountsFromInput(vatInput), [vatInput]);
 
@@ -284,11 +287,8 @@ export default function App() {
 
   function getCellText(r: VatRow, colIndex: number): string {
     const cols: Array<string> = [
-      r.source ?? "",
       r.state ?? "",
       r.vat_number ?? "",
-      r.country_code ?? "",
-      valText(r.valid),
       r.name ?? "",
       r.address ?? "",
       r.error_code ?? r.error ?? "",
@@ -365,6 +365,15 @@ export default function App() {
     }));
   }
 
+  function getFillColor(n: number) {
+    if (n >= 50) return "#0b2e5f";
+    if (n >= 20) return "#1f6aa5";
+    if (n >= 10) return "#2bb3e6";
+    if (n >= 5) return "#7dd3f7";
+    if (n >= 1) return "#cfefff";
+    return "#ffffff";
+  }
+
   // --- Map init ---
   useEffect(() => {
     const el = document.getElementById("countryMap");
@@ -390,6 +399,15 @@ export default function App() {
 
       mapRef.current = map;
       markerLayerRef.current = layer;
+
+      fetch("/countries.geojson")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (!j) return;
+          geoJsonRef.current = j;
+          setMapGeoVersion((v) => v + 1);
+        })
+        .catch(() => {});
     } catch {
       el.innerHTML = "<div style='padding:12px;color:#6b7280;font-size:12px;'>Map unavailable</div>";
     }
@@ -418,33 +436,67 @@ export default function App() {
     if (!map || !layer) return;
 
     layer.clearLayers();
-    const markers: L.Layer[] = [];
 
-    for (const [cc, n] of Object.entries(countryCounts)) {
-      const c = COUNTRY_COORDS[cc];
-      if (!c) continue;
+    const hasGeo = !!geoJsonRef.current;
 
-      const radius = 4 + Math.min(10, Math.round(Math.sqrt(n) * 3));
-      const m = L.circleMarker([c.lat, c.lon], {
-        radius,
-        color: "#0b2e5f",
-        weight: 1,
-        fillColor: "#2bb3e6",
-        fillOpacity: 0.85
+    if (hasGeo) {
+      const gj = L.geoJSON(geoJsonRef.current as any, {
+        style: (feature: any) => {
+          const cc = String(feature?.properties?.ISO_A2 || feature?.properties?.iso_a2 || "").toUpperCase();
+          const n = cc ? (countryCounts[cc] || 0) : 0;
+          return {
+            color: "#0b2e5f",
+            weight: 1,
+            opacity: 0.65,
+            fillColor: getFillColor(n),
+            fillOpacity: n ? 0.85 : 0.08,
+          };
+        },
+        onEachFeature: (feature: any, lyr: any) => {
+          const cc = String(feature?.properties?.ISO_A2 || feature?.properties?.iso_a2 || "").toUpperCase();
+          if (!cc) return;
+          const n = countryCounts[cc] || 0;
+          lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
+        },
       });
 
-      m.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-      m.addTo(layer);
-      markers.push(m);
+      gj.addTo(layer);
+    } else {
+      const markers: L.Layer[] = [];
+
+      for (const [cc, n] of Object.entries(countryCounts)) {
+        const c = COUNTRY_COORDS[cc];
+        if (!c) continue;
+
+        const radius = 4 + Math.min(10, Math.round(Math.sqrt(n) * 3));
+        const m = L.circleMarker([c.lat, c.lon], {
+          radius,
+          color: "#0b2e5f",
+          weight: 1,
+          fillColor: "#2bb3e6",
+          fillOpacity: 0.85
+        });
+
+        m.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
+        m.addTo(layer);
+        markers.push(m);
+      }
     }
 
-    if (markers.length) {
-      const group = L.featureGroup(markers as any);
-      map.fitBounds(group.getBounds().pad(0.25), { animate: false, maxZoom: 4 });
+    const coords = Object.entries(countryCounts)
+      .filter(([cc, n]) => n > 0 && COUNTRY_COORDS[cc])
+      .map(([cc]) => {
+        const c = COUNTRY_COORDS[cc];
+        return L.latLng(c.lat, c.lon);
+      });
+
+    if (coords.length) {
+      const b = L.latLngBounds(coords);
+      map.fitBounds(b.pad(0.25), { animate: false, maxZoom: 4 });
     } else {
       map.setView([53.5, 10], 3, { animate: false } as any);
     }
-  }, [countryCounts]);
+  }, [countryCounts, mapGeoVersion]);
 
   return (
     <>
@@ -526,24 +578,6 @@ export default function App() {
               <div className="stat"><span>Error</span><b style={{ color: "var(--bad)" }}>{stats.err}</b></div>
             </div>
 
-            <div className="mapbox">
-              <div className="mapbox-head">
-                <div className="mapbox-title">Input distribution</div>
-                <div className="mapbox-sub"><span className="nowrap">{mapCount}</span></div>
-              </div>
-
-              <div id="countryMap" />
-
-              <div className="mapbox-foot">
-                <div id="mapLegend" title={mapLegend}>{mapLegend}</div>
-                <div className="map-attrib">
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-                    © OpenStreetMap
-                  </a>
-                </div>
-              </div>
-            </div>
-
             <div className="callout" style={{ marginTop: 14 }}>
               <b>Tip</b>: Use the filter to search within results. Click a column header to sort. Click a row to expand details.
             </div>
@@ -561,6 +595,24 @@ export default function App() {
                 />
                 <div className="callout">
                   Sorting: <span className="mono">{sortLabel || "—"}</span>
+                </div>
+              </div>
+
+              <div className="mapbox">
+                <div className="mapbox-head">
+                  <div className="mapbox-title">Input distribution</div>
+                  <div className="mapbox-sub"><span className="nowrap">{mapCount}</span></div>
+                </div>
+
+                <div id="countryMap" />
+
+                <div className="mapbox-foot">
+                  <div id="mapLegend" title={mapLegend}>{mapLegend}</div>
+                  <div className="map-attrib">
+                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                      © OpenStreetMap
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -617,17 +669,12 @@ export default function App() {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: 110 }} onClick={() => sortByColumn(0, "Source")}>Source</th>
-                  <th style={{ width: 140 }} onClick={() => sortByColumn(1, "State")}>State</th>
-                  <th style={{ width: 170 }} onClick={() => sortByColumn(2, "VAT")}>VAT</th>
-                  <th style={{ width: 90 }} onClick={() => sortByColumn(3, "Country")}>Country</th>
-                  <th style={{ width: 90 }} onClick={() => sortByColumn(4, "Valid")}>Valid</th>
-                  <th style={{ width: 90 }}>Format</th>
-                  <th style={{ width: 110 }}>Tag</th>
-                  <th style={{ width: 260 }} onClick={() => sortByColumn(5, "Name")}>Name</th>
-                  <th style={{ width: 260 }} onClick={() => sortByColumn(6, "Address")}>Address</th>
-                  <th style={{ width: 220 }} onClick={() => sortByColumn(7, "Error")}>Error</th>
-                  <th style={{ width: 220 }} onClick={() => sortByColumn(8, "Details")}>Details</th>
+                  <th style={{ width: 160 }} onClick={() => sortByColumn(0, "State")}>State</th>
+                  <th style={{ width: 180 }} onClick={() => sortByColumn(1, "VAT")}>VAT</th>
+                  <th style={{ width: 280 }} onClick={() => sortByColumn(2, "Name")}>Name</th>
+                  <th style={{ width: 280 }} onClick={() => sortByColumn(3, "Address")}>Address</th>
+                  <th style={{ width: 240 }} onClick={() => sortByColumn(4, "Error")}>Error</th>
+                  <th style={{ width: 240 }} onClick={() => sortByColumn(5, "Details")}>Details</th>
                 </tr>
               </thead>
 
@@ -642,23 +689,15 @@ export default function App() {
                   return (
                     <React.Fragment key={`${key}-${idx}`}>
                       <tr onClick={() => setExpandedKey(isOpen ? null : key)} style={{ cursor: "pointer" }}>
-                        <td className="mono">{r.source || ""}</td>
                         <td>
                           <span className={`pill ${cls}`}>
                             <i aria-hidden="true" />
                             {st}{cls === "retry" && eta ? ` (ETA ${eta})` : ""}
                           </span>
                         </td>
-                        <td className="mono nowrap" title={r.vat_number || r.input || ""}>{r.vat_number || r.input || ""}</td>
-                        <td className="mono nowrap">{r.country_code || ""}</td>
-                        <td className="mono nowrap">{valText(r.valid)}</td>
 
-                        <td className="mono nowrap" title={r.format_reason || ""}>
-                          {r.format_ok === false ? "bad" : "ok"}
-                        </td>
-
-                        <td title={r.tag || ""}>
-                          {r.tag ? <span className={`badgeTag ${r.tag}`}>{r.tag}</span> : <span style={{ color:"var(--muted)" }}>—</span>}
+                        <td className="mono nowrap" title={r.vat_number || r.input || ""}>
+                          {r.vat_number || r.input || ""}
                         </td>
 
                         <td title={r.name || ""}>{r.name || ""}</td>
@@ -673,7 +712,7 @@ export default function App() {
 
                       {isOpen && (
                         <tr>
-                          <td colSpan={11} className="rowDetails">
+                          <td colSpan={6} className="rowDetails">
                             <div className="kv">
                               <span>Case</span><b>{r.case_ref || "—"}</b>
                               <span>Checked at</span><b>{r.checked_at ? new Date(r.checked_at).toLocaleString("nl-NL") : "—"}</b>
@@ -710,7 +749,7 @@ export default function App() {
 
                 {!filteredRows.length && (
                   <tr>
-                    <td colSpan={11} style={{ padding: 16, color: "var(--muted)" }}>
+                    <td colSpan={6} style={{ padding: 16, color: "var(--muted)" }}>
                       No results
                     </td>
                   </tr>
