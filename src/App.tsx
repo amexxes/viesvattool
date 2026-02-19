@@ -217,7 +217,7 @@ export default function App() {
 
     async function poll() {
       try {
-        const resp = await fetch(`/api/fr-job/${encodeURIComponent(frJobId)}`, { method: "GET" });
+        const resp = await fetch(`/api/fr-job/${encodeURIComponent(frJobId ?? "")}`, { method: "GET" });
         if (!resp.ok) return;
 
         const data = (await resp.json()) as FrJobResponse;
