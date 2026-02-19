@@ -1,5 +1,5 @@
 {
-  "name": "vat-ui",
+  "name": "viesvattool",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -10,8 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "better-sqlite3": "^11.6.0",
     "express": "^4.19.2",
     "leaflet": "^1.9.4",
+    "node-fetch": "^3.3.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
