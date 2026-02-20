@@ -511,24 +511,77 @@ const maxCount = Math.max(0, ...Object.values(countryCounts));
 
 if (geoJsonRef.current) {
   L.geoJSON(geoJsonRef.current as any, {
-    style: (feature: any) => {
-      const cc = featureToVatCc(feature);
-      const n = cc ? (countryCounts[cc] || 0) : 0;
+style: (feature: any) => {
+  const p = feature?.properties || {};
 
-      return {
-        color: "#0b2e5f",
-        weight: 0.8,
-        opacity: 0.7,
-        fillColor: getFillColor(n, maxCount),
-        fillOpacity: n ? 0.85 : 0.12,
-      };
-    },
-    onEachFeature: (feature: any, lyr: any) => {
-      const cc = featureToVatCc(feature);
-      if (!cc) return;
-      const n = countryCounts[cc] || 0;
-      lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-    },
+  // probeer ISO2 direct
+  let cc = (p.ISO_A2 || p.iso_a2 || "").toUpperCase();
+
+  // als dat niet bestaat, probeer ISO3 → map naar ISO2
+  if (!cc) {
+    const iso3 = (p.ISO_A3 || p.iso_a3 || "").toUpperCase();
+    if (iso3 === "FRA") cc = "FR";
+    if (iso3 === "DEU") cc = "DE";
+    if (iso3 === "NLD") cc = "NL";
+    if (iso3 === "BEL") cc = "BE";
+    if (iso3 === "ESP") cc = "ES";
+    if (iso3 === "ITA") cc = "IT";
+    if (iso3 === "PRT") cc = "PT";
+    if (iso3 === "LUX") cc = "LU";
+    if (iso3 === "IRL") cc = "IE";
+  }
+
+  if (cc === "GR") cc = "EL";
+  if (cc === "GB") cc = "XI";
+
+  const n = cc ? (countryCounts[cc] || 0) : 0;
+  const max = Math.max(0, ...Object.values(countryCounts));
+
+  const ratio = max > 0 ? n / max : 0;
+
+  let color = "#ffffff";
+  if (ratio >= 0.8) color = "#0b2e5f";
+  else if (ratio >= 0.5) color = "#1f6aa5";
+  else if (ratio >= 0.3) color = "#2bb3e6";
+  else if (ratio > 0) color = "#7dd3f7";
+
+  return {
+    color: "#0b2e5f",
+    weight: 0.8,
+    opacity: 0.7,
+    fillColor: color,
+    fillOpacity: n ? 0.85 : 0.12,
+  };
+},
+
+onEachFeature: (feature: any, lyr: any) => {
+  const p = feature?.properties || {};
+
+  let cc = (p.ISO_A2 || p.iso_a2 || "").toUpperCase();
+
+  if (!cc) {
+    const iso3 = (p.ISO_A3 || p.iso_a3 || "").toUpperCase();
+    if (iso3 === "FRA") cc = "FR";
+    if (iso3 === "DEU") cc = "DE";
+    if (iso3 === "NLD") cc = "NL";
+    if (iso3 === "BEL") cc = "BE";
+    if (iso3 === "ESP") cc = "ES";
+    if (iso3 === "ITA") cc = "IT";
+    if (iso3 === "PRT") cc = "PT";
+    if (iso3 === "LUX") cc = "LU";
+    if (iso3 === "IRL") cc = "IE";
+  }
+
+  if (cc === "GR") cc = "EL";
+  if (cc === "GB") cc = "XI";
+
+  const n = cc ? (countryCounts[cc] || 0) : 0;
+  if (!cc) return;
+
+  lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
+},
+
+
   }).addTo(layer);
 }
 
