@@ -453,69 +453,71 @@ useEffect(() => {
   const layer = markerLayerRef.current;
   if (!map || !layer) return;
 
-layer.clearLayers();
+  layer.clearLayers();
 
-if (geoJsonRef.current) {
-L.geoJSON(geoJsonRef.current as any, {
-  style: (feature: any) => {
-    const raw =
-      feature?.properties?.ISO_A2 ??
-      feature?.properties?.iso_a2 ??
-      feature?.properties?.ISO2 ??
-      feature?.properties?.iso2 ??
-      feature?.properties?.["alpha-2"] ??
-      feature?.properties?.["Alpha-2"] ??
-      feature?.properties?.["ISO3166-1-Alpha-2"];
+  if (geoJsonRef.current) {
+    L.geoJSON(geoJsonRef.current as any, {
+      style: (feature: any) => {
+        const raw =
+          feature?.properties?.ISO_A2 ??
+          feature?.properties?.iso_a2 ??
+          feature?.properties?.ISO2 ??
+          feature?.properties?.iso2 ??
+          feature?.properties?.["alpha-2"] ??
+          feature?.properties?.["Alpha-2"] ??
+          feature?.properties?.["ISO3166-1-Alpha-2"];
 
-    let cc = String(raw || "").toUpperCase().trim();
-    if (cc === "GR") cc = "EL";
+        let cc = String(raw || "").toUpperCase().trim();
+        if (cc === "GR") cc = "EL";
+        if (cc === "GB") cc = "XI";
 
-    const n = cc ? (countryCounts[cc] || 0) : 0;
+        const n = cc ? (countryCounts[cc] || 0) : 0;
 
-    return {
-      color: "#0b2e5f",
-      weight: 0.8,
-      opacity: 0.7,
-      fillColor: getFillColor(n),
-      fillOpacity: n ? 0.85 : 0.12,
-    };
-  },
-  onEachFeature: (feature: any, lyr: any) => {
-    const raw =
-      feature?.properties?.ISO_A2 ??
-      feature?.properties?.iso_a2 ??
-      feature?.properties?.ISO2 ??
-      feature?.properties?.iso2 ??
-      feature?.properties?.["alpha-2"] ??
-      feature?.properties?.["Alpha-2"] ??
-      feature?.properties?.["ISO3166-1-Alpha-2"];
+        return {
+          color: "#0b2e5f",
+          weight: 0.8,
+          opacity: 0.7,
+          fillColor: getFillColor(n),
+          fillOpacity: n ? 0.85 : 0.12,
+        };
+      },
+      onEachFeature: (feature: any, lyr: any) => {
+        const raw =
+          feature?.properties?.ISO_A2 ??
+          feature?.properties?.iso_a2 ??
+          feature?.properties?.ISO2 ??
+          feature?.properties?.iso2 ??
+          feature?.properties?.["alpha-2"] ??
+          feature?.properties?.["Alpha-2"] ??
+          feature?.properties?.["ISO3166-1-Alpha-2"];
 
-    let cc = String(raw || "").toUpperCase().trim();
-    if (cc === "GR") cc = "EL";
+        let cc = String(raw || "").toUpperCase().trim();
+        if (cc === "GR") cc = "EL";
+        if (cc === "GB") cc = "XI";
 
-    if (!cc) return;
-    const n = countryCounts[cc] || 0;
+        if (!cc) return;
+        const n = countryCounts[cc] || 0;
 
-    lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
-  },
-}).addTo(layer);
+        lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
+      },
+    }).addTo(layer);
+  }
 
-}
+  const coords = Object.entries(countryCounts)
+    .filter(([cc, n]) => n > 0 && COUNTRY_COORDS[cc])
+    .map(([cc]) => {
+      const c = COUNTRY_COORDS[cc];
+      return L.latLng(c.lat, c.lon);
+    });
 
-    const coords = Object.entries(countryCounts)
-      .filter(([cc, n]) => n > 0 && COUNTRY_COORDS[cc])
-      .map(([cc]) => {
-        const c = COUNTRY_COORDS[cc];
-        return L.latLng(c.lat, c.lon);
-      });
+  if (coords.length) {
+    const b = L.latLngBounds(coords);
+    map.fitBounds(b.pad(0.25), { animate: false, maxZoom: 4 });
+  } else {
+    map.setView([53.5, 10], 3, { animate: false } as any);
+  }
+}, [countryCounts, mapGeoVersion]);
 
-    if (coords.length) {
-      const b = L.latLngBounds(coords);
-      map.fitBounds(b.pad(0.25), { animate: false, maxZoom: 4 });
-    } else {
-      map.setView([53.5, 10], 3, { animate: false } as any);
-    }
-  }, [countryCounts, mapGeoVersion]);
 
   return (
     <>
