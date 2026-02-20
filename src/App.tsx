@@ -147,6 +147,8 @@ export default function App() {
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
   const geoJsonRef = useRef<any | null>(null);
+  const loggedIsoRef = useRef<Set<string>>(new Set());
+
 const ISO3_TO_ISO2: Record<string, string> = {
   FRA: "FR",
   DEU: "DE",
@@ -511,75 +513,78 @@ const maxCount = Math.max(0, ...Object.values(countryCounts));
 
 if (geoJsonRef.current) {
   L.geoJSON(geoJsonRef.current as any, {
-style: (feature: any) => {
+sstyle: (feature: any) => {
   const p = feature?.properties || {};
 
-  // probeer ISO2 direct
-  let cc = (p.ISO_A2 || p.iso_a2 || "").toUpperCase();
+  const raw =
+    p.ISO_A2 ?? p.iso_a2 ?? p.ISO2 ?? p.iso2 ??
+    p["alpha-2"] ?? p["Alpha-2"] ?? p["ISO3166-1-Alpha-2"] ??
+    p.ISO_A3 ?? p.iso_a3 ?? p.ISO3 ?? p.iso3 ??
+    p.ADMIN ?? p.name ?? p.NAME ?? p.Name;
 
-  // als dat niet bestaat, probeer ISO3 → map naar ISO2
-  if (!cc) {
-    const iso3 = (p.ISO_A3 || p.iso_a3 || "").toUpperCase();
-    if (iso3 === "FRA") cc = "FR";
-    if (iso3 === "DEU") cc = "DE";
-    if (iso3 === "NLD") cc = "NL";
-    if (iso3 === "BEL") cc = "BE";
-    if (iso3 === "ESP") cc = "ES";
-    if (iso3 === "ITA") cc = "IT";
-    if (iso3 === "PRT") cc = "PT";
-    if (iso3 === "LUX") cc = "LU";
-    if (iso3 === "IRL") cc = "IE";
-  }
+  let cc = String(raw || "").toUpperCase().trim();
+
+  // ISO3 → ISO2 (minimaal nodig voor EU + FR)
+  if (cc === "FRA") cc = "FR";
+  if (cc === "DEU") cc = "DE";
+  if (cc === "NLD") cc = "NL";
+  if (cc === "BEL") cc = "BE";
+  if (cc === "LUX") cc = "LU";
+  if (cc === "ESP") cc = "ES";
+  if (cc === "PRT") cc = "PT";
+  if (cc === "ITA") cc = "IT";
+  if (cc === "IRL") cc = "IE";
+  if (cc === "GRC") cc = "EL";
+  if (cc === "GBR") cc = "XI";
 
   if (cc === "GR") cc = "EL";
   if (cc === "GB") cc = "XI";
 
+  // éénmalig loggen (zodat je ziet welke codes binnenkomen)
+  if (cc && !loggedIsoRef.current.has(cc)) {
+    loggedIsoRef.current.add(cc);
+    console.log("map feature code:", cc, "count:", countryCounts[cc] || 0);
+  }
+
   const n = cc ? (countryCounts[cc] || 0) : 0;
   const max = Math.max(0, ...Object.values(countryCounts));
-
   const ratio = max > 0 ? n / max : 0;
 
-  let color = "#ffffff";
-  if (ratio >= 0.8) color = "#0b2e5f";
-  else if (ratio >= 0.5) color = "#1f6aa5";
-  else if (ratio >= 0.3) color = "#2bb3e6";
-  else if (ratio > 0) color = "#7dd3f7";
+  let fill = "#ffffff";
+  if (ratio >= 0.8) fill = "#0b2e5f";
+  else if (ratio >= 0.55) fill = "#1f6aa5";
+  else if (ratio >= 0.35) fill = "#2bb3e6";
+  else if (ratio >= 0.18) fill = "#7dd3f7";
+  else if (ratio > 0) fill = "#cfefff";
 
   return {
     color: "#0b2e5f",
     weight: 0.8,
     opacity: 0.7,
-    fillColor: color,
-    fillOpacity: n ? 0.85 : 0.12,
+    fillColor: fill,
+    fillOpacity: n ? 0.85 : 0.05,
   };
 },
 
+
 onEachFeature: (feature: any, lyr: any) => {
   const p = feature?.properties || {};
+  const raw = p.ISO_A2 ?? p.iso_a2 ?? p.ISO2 ?? p.iso2 ?? p.ISO_A3 ?? p.iso_a3 ?? p.ISO3 ?? p.iso3;
+  let cc = String(raw || "").toUpperCase().trim();
 
-  let cc = (p.ISO_A2 || p.iso_a2 || "").toUpperCase();
-
-  if (!cc) {
-    const iso3 = (p.ISO_A3 || p.iso_a3 || "").toUpperCase();
-    if (iso3 === "FRA") cc = "FR";
-    if (iso3 === "DEU") cc = "DE";
-    if (iso3 === "NLD") cc = "NL";
-    if (iso3 === "BEL") cc = "BE";
-    if (iso3 === "ESP") cc = "ES";
-    if (iso3 === "ITA") cc = "IT";
-    if (iso3 === "PRT") cc = "PT";
-    if (iso3 === "LUX") cc = "LU";
-    if (iso3 === "IRL") cc = "IE";
-  }
-
+  if (cc === "FRA") cc = "FR";
+  if (cc === "DEU") cc = "DE";
+  if (cc === "NLD") cc = "NL";
+  if (cc === "GRC") cc = "EL";
+  if (cc === "GBR") cc = "XI";
   if (cc === "GR") cc = "EL";
   if (cc === "GB") cc = "XI";
 
-  const n = cc ? (countryCounts[cc] || 0) : 0;
   if (!cc) return;
-
+  const n = countryCounts[cc] || 0;
   lyr.bindTooltip(`${cc} • ${n}`, { direction: "top", opacity: 0.9 });
 },
+
 
 
   }).addTo(layer);
