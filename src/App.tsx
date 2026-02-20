@@ -365,14 +365,18 @@ export default function App() {
     }));
   }
 
-function getFillColor(n: number) {
-  if (n >= 50) return "#0b2e5f";
-  if (n >= 20) return "#1f6aa5";
-  if (n >= 10) return "#2bb3e6";
-  if (n >= 5) return "#7dd3f7";
-  if (n >= 1) return "#cfefff";
+function getFillColor(n: number, max: number) {
+  if (max <= 0) return "#ffffff";
+  const r = n / max; // 0..1
+
+  if (r >= 0.80) return "#0b2e5f";
+  if (r >= 0.55) return "#1f6aa5";
+  if (r >= 0.35) return "#2bb3e6";
+  if (r >= 0.18) return "#7dd3f7";
+  if (r > 0) return "#cfefff";
   return "#ffffff";
 }
+
 
 // --- Map init ---
 useEffect(() => {
