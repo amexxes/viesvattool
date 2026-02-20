@@ -147,6 +147,54 @@ export default function App() {
   const mapRef = useRef<L.Map | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
   const geoJsonRef = useRef<any | null>(null);
+const ISO3_TO_ISO2: Record<string, string> = {
+  FRA: "FR",
+  DEU: "DE",
+  NLD: "NL",
+  BEL: "BE",
+  LUX: "LU",
+  ESP: "ES",
+  PRT: "PT",
+  ITA: "IT",
+  IRL: "IE",
+  AUT: "AT",
+  DNK: "DK",
+  SWE: "SE",
+  FIN: "FI",
+  POL: "PL",
+  CZE: "CZ",
+  SVK: "SK",
+  SVN: "SI",
+  HUN: "HU",
+  ROU: "RO",
+  BGR: "BG",
+  HRV: "HR",
+  GRC: "EL",
+  CYP: "CY",
+  MLT: "MT",
+  EST: "EE",
+  LVA: "LV",
+  LTU: "LT",
+  GBR: "XI"
+};
+
+function featureToVatCc(feature: any): string {
+  const p = feature?.properties || {};
+
+  const raw2 =
+    p.ISO_A2 ?? p.iso_a2 ?? p.ISO2 ?? p.iso2 ?? p["alpha-2"];
+
+  let cc2 = String(raw2 || "").toUpperCase().trim();
+  if (cc2 === "GR") cc2 = "EL";
+  if (cc2 === "GB") cc2 = "XI";
+
+  if (cc2 && cc2 !== "-99") return cc2;
+
+  const raw3 = p.ISO_A3 ?? p.iso_a3 ?? p.ISO3 ?? p.iso3;
+  const cc3 = String(raw3 || "").toUpperCase().trim();
+
+  return ISO3_TO_ISO2[cc3] || "";
+}
 
   const countryCounts = useMemo(() => computeCountryCountsFromInput(vatInput), [vatInput]);
 
@@ -458,30 +506,20 @@ useEffect(() => {
   if (!map || !layer) return;
 
   layer.clearLayers();
-
+const maxCount = Math.max(0, ...Object.values(countryCounts));
   if (geoJsonRef.current) {
     L.geoJSON(geoJsonRef.current as any, {
       style: (feature: any) => {
         const raw =
-          feature?.properties?.ISO_A2 ??
-          feature?.properties?.iso_a2 ??
-          feature?.properties?.ISO2 ??
-          feature?.properties?.iso2 ??
-          feature?.properties?.["alpha-2"] ??
-          feature?.properties?.["Alpha-2"] ??
-          feature?.properties?.["ISO3166-1-Alpha-2"];
+const cc = featureToVatCc(feature);
+const n = cc ? (countryCounts[cc] || 0) : 0;
 
-        let cc = String(raw || "").toUpperCase().trim();
-        if (cc === "GR") cc = "EL";
-        if (cc === "GB") cc = "XI";
-
-        const n = cc ? (countryCounts[cc] || 0) : 0;
 
         return {
           color: "#0b2e5f",
           weight: 0.8,
           opacity: 0.7,
-          fillColor: getFillColor(n),
+          fillColor: getFillColor(n, maxCount),
           fillOpacity: n ? 0.85 : 0.12,
         };
       },
