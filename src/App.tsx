@@ -513,7 +513,7 @@ const maxCount = Math.max(0, ...Object.values(countryCounts));
 
 if (geoJsonRef.current) {
   L.geoJSON(geoJsonRef.current as any, {
-sstyle: (feature: any) => {
+style: (feature: any) => {
   const p = feature?.properties || {};
 
   const raw =
